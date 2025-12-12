@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -317,13 +318,17 @@ OUTPUT FORMAT - Return ONLY valid JSON:
 
 Output ONLY JSON, no other text.`;
         } else if (aiMode === 'upload') {
-          const typeInstruction = aiSettings.qType === 'Randomize' 
-            ? 'Randomly alternate between "Single Choice" and "Multiple Choice"' 
-            : `Use "${aiSettings.qType}" for all questions`;
+          const typeInstruction = aiSettings.qType === 'As in file'
+            ? 'Preserve the question type as it appears in the file (Single Choice if 1 correct answer, Multiple Choice if 2+ correct answers)'
+            : aiSettings.qType === 'Randomize' 
+              ? 'Randomly alternate between "Single Choice" and "Multiple Choice"' 
+              : `Use "${aiSettings.qType}" for all questions`;
           
-          const altsInstruction = aiSettings.numAlts === 'Randomize'
-            ? 'Vary alternatives between 2-5 per question'
-            : `${aiSettings.numAlts} alternatives per question`;
+          const altsInstruction = aiSettings.numAlts === 'As in file'
+            ? 'Keep the same number of alternatives as in the original file'
+            : aiSettings.numAlts === 'Randomize'
+              ? 'Vary alternatives between 2-5 per question'
+              : `${aiSettings.numAlts} alternatives per question`;
 
           const difficultyInstruction = aiSettings.difficulty === 'N/A' 
             ? '' 
@@ -719,7 +724,7 @@ Output ONLY JSON, no other text.`;
                         <span style={{ fontSize: '18px' }}>📋</span>
                         <div><div style={{ fontWeight: '500' }}>Paste Questions</div><div style={{ fontSize: '12px', color: '#888' }}>AI creates alternatives</div></div>
                       </button>
-                      <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
+                      <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); setAiSettings(s => ({ ...s, qType: s.useAllQuestions ? 'As in file' : 'Single Choice', numAlts: s.useAllQuestions ? 'As in file' : 4 })); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
                         <span style={{ fontSize: '18px' }}>📄</span>
                         <div><div style={{ fontWeight: '500' }}>From Document</div><div style={{ fontSize: '12px', color: '#888' }}>Upload PDF, Word, or text</div></div>
                       </button>
@@ -765,7 +770,7 @@ Output ONLY JSON, no other text.`;
                 
                 <div style={{ display: 'flex', borderBottom: '1px solid #ddd' }}>
                   {[['topic', '💡 Topic'], ['paste', '📋 Paste'], ['upload', '📄 Upload']].map(([id, label]) => (
-                    <button key={id} onClick={() => { setAiMode(id); setGenStatus(''); }} style={{ flex: 1, padding: '12px', backgroundColor: aiMode === id ? '#fff' : '#f9f9f9', color: aiMode === id ? '#f37021' : '#666', border: 'none', borderBottom: aiMode === id ? '2px solid #f37021' : '2px solid transparent', cursor: 'pointer', fontWeight: '500', fontSize: '14px' }}>{label}</button>
+                    <button key={id} onClick={() => { setAiMode(id); setGenStatus(''); if (id === 'upload') setAiSettings(s => ({ ...s, qType: s.useAllQuestions ? 'As in file' : 'Single Choice', numAlts: s.useAllQuestions ? 'As in file' : 4 })); }} style={{ flex: 1, padding: '12px', backgroundColor: aiMode === id ? '#fff' : '#f9f9f9', color: aiMode === id ? '#f37021' : '#666', border: 'none', borderBottom: aiMode === id ? '2px solid #f37021' : '2px solid transparent', cursor: 'pointer', fontWeight: '500', fontSize: '14px' }}>{label}</button>
                   ))}
                 </div>
                 
@@ -870,7 +875,7 @@ Output ONLY JSON, no other text.`;
                   {aiMode === 'upload' && (
                     <div style={{ marginTop: '20px' }}>
                       <label style={checkboxStyle}>
-                        <input type="checkbox" checked={aiSettings.useAllQuestions} onChange={e => setAiSettings({ ...aiSettings, useAllQuestions: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
+                        <input type="checkbox" checked={aiSettings.useAllQuestions} onChange={e => setAiSettings({ ...aiSettings, useAllQuestions: e.target.checked, qType: e.target.checked ? 'As in file' : 'Single Choice', numAlts: e.target.checked ? 'As in file' : 4 })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
                         Use all questions from file
                       </label>
                       <p style={{ margin: '4px 0 16px 26px', color: '#888', fontSize: '12px' }}>
@@ -891,6 +896,7 @@ Output ONLY JSON, no other text.`;
                         <div>
                           <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label>
                           <select value={aiSettings.qType} onChange={e => setAiSettings({ ...aiSettings, qType: e.target.value })} style={inputStyle}>
+                            {aiSettings.useAllQuestions && <option>As in file</option>}
                             <option>Single Choice</option>
                             <option>Multiple Choice</option>
                             <option>Randomize</option>
@@ -899,6 +905,7 @@ Output ONLY JSON, no other text.`;
                         <div>
                           <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label>
                           <select value={aiSettings.numAlts} onChange={e => setAiSettings({ ...aiSettings, numAlts: e.target.value })} style={inputStyle}>
+                            {aiSettings.useAllQuestions && <option value="As in file">As in file</option>}
                             {[2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
                             <option value="Randomize">Randomize</option>
                           </select>
@@ -981,7 +988,7 @@ Output ONLY JSON, no other text.`;
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
                 <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setGenStatus(''); }} style={{ ...btnPrimary, padding: '14px 24px', fontSize: '15px' }}>✨ AI Generate</button>
                 <button onClick={() => { setAiMode('paste'); setShowAIPanel(true); setGenStatus(''); }} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>📋 Paste Questions</button>
-                <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setGenStatus(''); }} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>📄 From Document</button>
+                <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setGenStatus(''); setAiSettings(s => ({ ...s, qType: s.useAllQuestions ? 'As in file' : 'Single Choice', numAlts: s.useAllQuestions ? 'As in file' : 4 })); }} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>📄 From Document</button>
                 <button onClick={() => setQuestions([createQuestion()])} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>✏️ Manual Entry</button>
               </div>
             </div>
