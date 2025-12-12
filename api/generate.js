@@ -1,20 +1,9 @@
 export default async function handler(req, res) {
-  // CORS and domain restriction
+  // CORS headers - allow all for iframe compatibility
   const origin = req.headers.origin || req.headers.referer || '';
-  const allowedDomains = [
-    '.dialogedu.com',
-    'localhost:3000',  // For local testing
-    'localhost:5173',  // Vite dev server
-  ];
   
-  const isAllowed = allowedDomains.some(domain => origin.includes(domain));
-  
-  if (!isAllowed && origin) {
-    return res.status(403).json({ error: 'Unauthorized domain' });
-  }
-
-  // Set CORS headers
-  res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  // Set CORS headers first
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
@@ -24,6 +13,24 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Domain restriction - check referer for iframe embeds
+  const referer = req.headers.referer || '';
+  const allowedPatterns = [
+    'dialogedu.com',
+    'vercel.app',      // Allow the Vercel-hosted app itself
+    'localhost',        // For local testing
+  ];
+  
+  const isAllowed = allowedPatterns.some(pattern => 
+    origin.includes(pattern) || referer.includes(pattern)
+  );
+  
+  // If there's an origin/referer and it's not allowed, block it
+  // But allow requests with no origin (direct API testing)
+  if ((origin || referer) && !isAllowed) {
+    return res.status(403).json({ error: 'Unauthorized domain' });
   }
 
   try {
