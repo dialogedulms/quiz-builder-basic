@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -13,19 +14,8 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    
-    @keyframes progress {
-      0% { width: 0%; }
-      50% { width: 70%; }
-      100% { width: 95%; }
-    }
-    
-    .progress-bar {
-      height: 4px;
-      background: linear-gradient(90deg, #f37021, #ff9a5c);
-      border-radius: 2px;
-      animation: progress 8s ease-out forwards;
-    }
+    @keyframes progress { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 95%; } }
+    .progress-bar { height: 4px; background: linear-gradient(90deg, #f37021, #ff9a5c); border-radius: 2px; animation: progress 8s ease-out forwards; }
   </style>
 </head>
 <body>
@@ -33,7 +23,6 @@
   <script type="text/babel">
     const { useState, useRef } = React;
 
-    // Set PDF.js worker
     if (window.pdfjsLib) {
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -51,19 +40,9 @@
       const [isDragging, setIsDragging] = useState(false);
       
       const [aiSettings, setAiSettings] = useState({
-        topic: '',
-        pastedQuestions: '',
-        numQuestions: 5,
-        points: 10,
-        qType: 'Single Choice',
-        numAlts: 4,
-        tags: '',
-        difficulty: 'N/A',
-        addFeedback: false,
-        feedbackLevel: 'question',
-        feedbackSource: 'ai',
-        useAllQuestions: true,
-        randomizeAlts: false
+        topic: '', pastedQuestions: '', numQuestions: 5, points: 10, qType: 'Single Choice',
+        numAlts: 4, tags: '', difficulty: 'N/A', addFeedback: false, feedbackLevel: 'question',
+        feedbackSource: 'ai', useAllQuestions: true, randomizeAlts: false
       });
       
       const [uploadedFile, setUploadedFile] = useState(null);
@@ -81,796 +60,257 @@
       };
 
       const createQuestion = () => ({
-        id: Date.now(),
-        questionType: 'Single Choice',
-        scoring: 'Simple',
-        questionText: '',
-        points: '10',
-        tags: '',
-        numAlts: 4,
-        correctFb: '',
-        incorrectFb: '',
+        id: Date.now(), questionType: 'Single Choice', scoring: 'Simple', questionText: '',
+        points: '10', tags: '', numAlts: 4, correctFb: '', incorrectFb: '', showFeedback: false,
         alternatives: Array(5).fill(null).map(() => ({ text: '', correct: false, pct: '', feedback: '' }))
       });
 
       const updateQ = (idx, field, value) => {
         const updated = [...questions];
         updated[idx] = { ...updated[idx], [field]: value };
-        if (field === 'questionType' && value === 'Single Choice') {
-          updated[idx].scoring = 'Simple';
-        }
+        if (field === 'questionType' && value === 'Single Choice') updated[idx].scoring = 'Simple';
         setQuestions(updated);
       };
 
       const updateAlt = (qIdx, aIdx, field, value) => {
         const updated = [...questions];
-        const alts = [...updated[qIdx].alternatives];
-        alts[aIdx] = { ...alts[aIdx], [field]: value };
-        updated[qIdx] = { ...updated[qIdx], alternatives: alts };
+        const q = updated[qIdx];
+        q.alternatives = q.alternatives.map((a, i) => {
+          if (i === aIdx) {
+            if (field === 'correct' && value && q.questionType === 'Single Choice') return { ...a, correct: true };
+            return { ...a, [field]: value };
+          }
+          if (field === 'correct' && value && q.questionType === 'Single Choice') return { ...a, correct: false };
+          return a;
+        });
         setQuestions(updated);
       };
 
-      // Extract text from PDF
       const extractPdfText = async (arrayBuffer) => {
-        try {
-          const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-          let fullText = '';
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const textContent = await page.getTextContent();
-            const pageText = textContent.items.map(item => item.str).join(' ');
-            fullText += pageText + '\n';
-          }
-          return fullText;
-        } catch (err) {
-          console.error('PDF extraction error:', err);
-          throw new Error('Could not read PDF. Please try a text file instead.');
+        const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          fullText += textContent.items.map(item => item.str).join(' ') + '\n';
         }
+        return fullText;
       };
 
-      // Extract text from PPTX
       const extractPptxText = async (arrayBuffer) => {
-        try {
-          const zip = await JSZip.loadAsync(arrayBuffer);
-          let fullText = '';
-          
-          // Get all slide files
-          const slideFiles = Object.keys(zip.files)
-            .filter(name => name.match(/ppt\/slides\/slide\d+\.xml$/))
-            .sort((a, b) => {
-              const numA = parseInt(a.match(/slide(\d+)/)[1]);
-              const numB = parseInt(b.match(/slide(\d+)/)[1]);
-              return numA - numB;
-            });
-          
-          for (const slideFile of slideFiles) {
-            const content = await zip.files[slideFile].async('string');
-            // Extract text from XML - look for <a:t> tags which contain text
-            const textMatches = content.match(/<a:t>([^<]*)<\/a:t>/g) || [];
-            const slideText = textMatches
-              .map(match => match.replace(/<a:t>|<\/a:t>/g, ''))
-              .join(' ');
-            if (slideText.trim()) {
-              fullText += slideText + '\n\n';
-            }
-          }
-          
-          return fullText || '[No text content found in presentation]';
-        } catch (err) {
-          console.error('PPTX extraction error:', err);
-          throw new Error('Could not read PowerPoint file. Please try a different format.');
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        let fullText = '';
+        const slideFiles = Object.keys(zip.files).filter(name => name.match(/ppt\/slides\/slide\d+\.xml$/))
+          .sort((a, b) => parseInt(a.match(/slide(\d+)/)[1]) - parseInt(b.match(/slide(\d+)/)[1]));
+        for (const slideFile of slideFiles) {
+          const content = await zip.files[slideFile].async('string');
+          const textMatches = content.match(/<a:t>([^<]*)<\/a:t>/g) || [];
+          const slideText = textMatches.map(match => match.replace(/<a:t>|<\/a:t>/g, '')).join(' ');
+          if (slideText.trim()) fullText += slideText + '\n\n';
         }
+        return fullText || '[No text content found]';
       };
 
       const handleFile = async (file) => {
         if (!file) return;
         setUploadedFile(file);
         setGenStatus('Reading file...');
-        
         try {
           if (file.type === 'application/pdf') {
-            const arrayBuffer = await file.arrayBuffer();
-            const text = await extractPdfText(arrayBuffer);
-            setFileContent({ type: 'text/plain', text: text });
-            setGenStatus('');
-          } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || file.name.endsWith('.docx')) {
-            // Word document
-            const arrayBuffer = await file.arrayBuffer();
-            const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
-            setFileContent({ type: 'text/plain', text: result.value });
-            setGenStatus('');
-          } else if (file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' || file.name.endsWith('.pptx')) {
-            // PowerPoint document
-            const arrayBuffer = await file.arrayBuffer();
-            const text = await extractPptxText(arrayBuffer);
-            setFileContent({ type: 'text/plain', text: text });
-            setGenStatus('');
-          } else if (file.type === 'application/msword' || file.name.endsWith('.doc')) {
-            setGenStatus('Note: .doc files are not supported. Please convert to .docx');
+            const text = await extractPdfText(await file.arrayBuffer());
+            setFileContent({ type: 'text/plain', text }); setGenStatus('');
+          } else if (file.name.endsWith('.docx')) {
+            const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+            setFileContent({ type: 'text/plain', text: result.value }); setGenStatus('');
+          } else if (file.name.endsWith('.pptx')) {
+            const text = await extractPptxText(await file.arrayBuffer());
+            setFileContent({ type: 'text/plain', text }); setGenStatus('');
+          } else if (file.name.endsWith('.doc') || file.name.endsWith('.ppt')) {
+            setGenStatus('Note: Legacy formats not supported. Please convert to .docx or .pptx');
             setFileContent(null);
-          } else if (file.type === 'application/vnd.ms-powerpoint' || file.name.endsWith('.ppt')) {
-            setGenStatus('Note: .ppt files are not supported. Please convert to .pptx');
-            setFileContent(null);
-          } else if (file.type.startsWith('text/') || file.name.endsWith('.txt')) {
-            const text = await file.text();
-            setFileContent({ type: 'text/plain', text: text });
-            setGenStatus('');
           } else if (file.type.startsWith('image/')) {
-            // For images, we'll just note that it's an image - Gemini can't process images via this API
-            setFileContent({ type: 'image', text: `[Image file: ${file.name}]` });
-            setGenStatus('Note: Image files cannot be processed directly. Please use text, PDF, Word, or PowerPoint files.');
+            setFileContent({ type: 'image', text: `[Image: ${file.name}]` });
+            setGenStatus('Note: Images cannot be processed. Please use PDF, Word, or PowerPoint.');
           } else {
-            // Try to read as text
-            const text = await file.text();
-            setFileContent({ type: 'text/plain', text: text });
-            setGenStatus('');
+            setFileContent({ type: 'text/plain', text: await file.text() }); setGenStatus('');
           }
-        } catch (err) {
-          setGenStatus(`Error reading file: ${err.message}`);
-        }
+        } catch (err) { setGenStatus('Error: ' + err.message); }
       };
 
-      const handleFileInput = (e) => {
-        const file = e.target.files?.[0];
-        if (file) handleFile(file);
-      };
+      const handleFileInput = (e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); };
+      const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
+      const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
+      const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files?.[0]) handleFile(e.dataTransfer.files[0]); };
+      const cancelGeneration = () => { if (abortControllerRef.current) { abortControllerRef.current.abort(); setIsGenerating(false); setGenStatus('Cancelled.'); } };
 
-      // Drag and drop handlers
-      const handleDragOver = (e) => {
-        e.preventDefault();
-        setIsDragging(true);
-      };
-
-      const handleDragLeave = (e) => {
-        e.preventDefault();
-        setIsDragging(false);
-      };
-
-      const handleDrop = (e) => {
-        e.preventDefault();
-        setIsDragging(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file) handleFile(file);
-      };
-
-      // Cancel generation
-      const cancelGeneration = () => {
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-        }
-        setIsGenerating(false);
-        setGenStatus('Generation cancelled.');
+      const clearAll = () => {
+        setQuestions([]); setLastPrompt(''); setShowAddMenu(false); setShowAIPanel(false);
+        setErrors([]); setShowErrors(false); setUploadedFile(null); setFileContent(null);
+        setAiSettings({ topic: '', pastedQuestions: '', numQuestions: 5, points: 10, qType: 'Single Choice',
+          numAlts: 4, tags: '', difficulty: 'N/A', addFeedback: false, feedbackLevel: 'question',
+          feedbackSource: 'ai', useAllQuestions: true, randomizeAlts: false });
       };
 
       const generateQuestions = async () => {
-        // Validate inputs first
-        if (aiMode === 'topic' && !aiSettings.topic.trim()) {
-          setGenStatus('Please enter a topic or description for your quiz.');
-          return;
-        }
-        if (aiMode === 'paste' && !aiSettings.pastedQuestions.trim()) {
-          setGenStatus('Please paste your questions in the text area.');
-          return;
-        }
-        if (aiMode === 'upload' && !fileContent) {
-          setGenStatus('Please upload a document first.');
-          return;
-        }
-        if (aiMode === 'upload' && fileContent?.type === 'image') {
-          setGenStatus('Please upload a PDF, Word, or text file. Images are not supported.');
-          return;
-        }
-
-        // Create abort controller for cancellation
-        abortControllerRef.current = new AbortController();
+        if (aiMode === 'topic' && !aiSettings.topic.trim()) { setGenStatus('Please enter a topic.'); return; }
+        if (aiMode === 'paste' && !aiSettings.pastedQuestions.trim()) { setGenStatus('Please paste questions.'); return; }
+        if (aiMode === 'upload' && !fileContent) { setGenStatus('Please upload a document.'); return; }
+        if (aiMode === 'upload' && fileContent?.type === 'image') { setGenStatus('Images not supported.'); return; }
 
         setIsGenerating(true);
         setGenStatus('Generating questions... This may take 10-20 seconds.');
-        
+        abortControllerRef.current = new AbortController();
+
         let prompt = '';
+        const feedbackInstr = !aiSettings.addFeedback ? 'NO feedback fields' :
+          aiSettings.feedbackSource === 'generic' ? (aiSettings.feedbackLevel === 'question' ? 
+            'Include "correctFeedback": "Correct!" and "incorrectFeedback": "Incorrect."' :
+            'For each alternative include "feedback": "Correct!" or "Incorrect."') :
+          aiSettings.feedbackSource === 'inherited' ? 
+            'Extract "Rationale" from source as correctFeedback. If not found, leave empty ""' :
+          (aiSettings.feedbackLevel === 'question' ? 
+            'Include educational "correctFeedback" and "incorrectFeedback"' :
+            'Include educational "feedback" for each alternative');
+
         if (aiMode === 'topic') {
-          prompt = `You are a quiz question generator. Generate quiz questions based on this request:
-
-"${aiSettings.topic}"
-
-IMPORTANT INSTRUCTIONS:
-1. Parse the request for: number of questions, question types, points, feedback preferences
-2. Default to 5 questions if not specified
-3. Default to 10 points if not specified
-4. Question types are: "Single Choice" (exactly 1 correct) or "Multiple Choice" (2+ correct answers possible, but must have at least 1 incorrect)
-5. If user asks for "randomized types" or "mix", alternate between Single Choice and Multiple Choice
-6. If user mentions "weighted" for Multiple Choice, set "scoring": "Weighted" (otherwise use "Simple")
-7. TAGS: Only include "tags" field if the user EXPLICITLY mentions tags in their request. If user doesn't mention tags, set tags to empty string "".
-
-FEEDBACK RULES (CRITICAL):
-- Only include feedback if user requests it
-- "Single Choice" questions: Include "feedback" for EACH alternative
-- "Multiple Choice" questions: Include "correctFeedback" and "incorrectFeedback" at question level ONLY (never per-alternative)
-
-OUTPUT FORMAT - Return ONLY valid JSON, no other text:
-{
-  "questions": [
-    {
-      "questionType": "Single Choice",
-      "scoring": "Simple",
-      "questionText": "Question here?",
-      "points": 10,
-      "tags": "",
-      "alternatives": [
-        {"text": "Option A", "correct": true, "feedback": "Correct! Explanation..."},
-        {"text": "Option B", "correct": false, "feedback": "Incorrect. Explanation..."}
-      ]
-    }
-  ]
-}
-
-Remember: Output ONLY the JSON object, nothing else.`;
+          prompt = `Generate quiz questions based on: "${aiSettings.topic}"\n\nRules:\n- Follow all specifications exactly\n- Single Choice = 1 correct, Multiple Choice = 2+ correct\n- Only include tags if mentioned\n\nOutput valid JSON:\n{"questions":[{"questionType":"Single Choice","scoring":"Simple","questionText":"...","points":10,"tags":"","correctFeedback":"","incorrectFeedback":"","alternatives":[{"text":"...","correct":true,"feedback":""}]}]}`;
         } else if (aiMode === 'paste') {
-          const typeInstruction = aiSettings.qType === 'Randomize' 
-            ? 'Randomly alternate between "Single Choice" (exactly 1 correct) and "Multiple Choice" (2+ correct, at least 1 incorrect)' 
-            : `Use "${aiSettings.qType}" for all questions`;
-          
-          const difficultyInstruction = aiSettings.difficulty === 'N/A'
-            ? ''
-            : aiSettings.difficulty === 'Randomize'
-              ? '- Vary difficulty (mix of easy, medium, hard questions)'
-              : `- ${aiSettings.difficulty} difficulty`;
-
-          let feedbackInstruction = 'NO feedback - do not include any feedback fields';
-          if (aiSettings.addFeedback) {
-            if (aiSettings.feedbackSource === 'generic') {
-              if (aiSettings.feedbackLevel === 'question') {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- Include "correctFeedback": "Correct! Great job." at question level
-- Include "incorrectFeedback": "Incorrect. Please review the material." at question level
-- Do NOT include feedback on individual alternatives`;
-              } else {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- For EACH alternative, include "feedback" field
-- For correct alternatives: "Correct! Great job."
-- For incorrect alternatives: "Incorrect."`;
-              }
-            } else if (aiSettings.feedbackSource === 'inherited') {
-              if (aiSettings.feedbackLevel === 'question') {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- Look for "Rationale", "Explanation", or "Feedback" in the source content
-- If found, use it as "correctFeedback" at question level
-- Set "incorrectFeedback": "Incorrect. Please review the material."
-- If no rationale found, leave feedback fields as empty strings for manual entry`;
-              } else {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- Look for "Rationale", "Explanation", or "Feedback" in the source content
-- If found for correct answer, use it as "feedback" on the correct alternative(s)
-- For incorrect alternatives: set "feedback": "Incorrect."
-- If no rationale found, leave feedback fields as empty strings for manual entry`;
-              }
-            } else {
-              // AI generated
-              if (aiSettings.feedbackLevel === 'question') {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- Include "correctFeedback" at question level with positive, educational explanation
-- Include "incorrectFeedback" at question level with helpful guidance
-- Do NOT include feedback on individual alternatives`;
-              } else {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- For EACH alternative, include "feedback" field with positive, encouraging tone
-- Correct alternatives: Explain why it's correct
-- Incorrect alternatives: Gently explain why it's wrong and guide toward correct answer`;
-              }
-            }
-          }
-
-          const tagsInstruction = aiSettings.tags.trim() 
-            ? `- Tag each question with: "${aiSettings.tags}"`
-            : '- Do NOT include tags (set tags to empty string "")';
-
-          prompt = `You are a quiz question generator. Process these questions:
-
-${aiSettings.pastedQuestions}
-
-PARSING RULES:
-1. If alternatives are provided (A, B, C, D options), use them exactly as given - preserve the order
-2. If a correct answer is marked (with *, "correct", ✓), preserve that as correct
-3. If no alternatives provided, generate ${aiSettings.numAlts} alternatives
-4. If no correct answer marked, determine the correct answer
-
-REQUIREMENTS:
-- ${typeInstruction}
-${difficultyInstruction}
-- ${aiSettings.points} points per question
-${tagsInstruction}
-
-${feedbackInstruction}
-
-OUTPUT FORMAT - Return ONLY valid JSON:
-{
-  "questions": [
-    {
-      "questionType": "Single Choice",
-      "scoring": "Simple",
-      "questionText": "...",
-      "points": ${aiSettings.points},
-      "tags": "${aiSettings.tags || ''}",
-      "correctFeedback": "...",
-      "incorrectFeedback": "...",
-      "alternatives": [
-        {"text": "...", "correct": true, "feedback": "..."},
-        {"text": "...", "correct": false, "feedback": "..."}
-      ]
-    }
-  ]
-}
-
-Output ONLY JSON, no other text.`;
-        } else if (aiMode === 'upload') {
-          const typeInstruction = aiSettings.qType === 'As in file'
-            ? 'Preserve the question type as it appears in the file (Single Choice if 1 correct answer, Multiple Choice if 2+ correct answers)'
-            : aiSettings.qType === 'Randomize' 
-              ? 'Randomly alternate between "Single Choice" and "Multiple Choice"' 
-              : `Use "${aiSettings.qType}" for all questions`;
-          
-          const altsInstruction = aiSettings.numAlts === 'As in file'
-            ? 'Keep the same number of alternatives as in the original file'
-            : aiSettings.numAlts === 'Randomize'
-              ? 'Vary alternatives between 2-5 per question'
-              : `${aiSettings.numAlts} alternatives per question`;
-
-          const difficultyInstruction = aiSettings.difficulty === 'N/A' 
-            ? '' 
-            : aiSettings.difficulty === 'Randomize'
-              ? '- Vary difficulty levels'
-              : `- ${aiSettings.difficulty} difficulty`;
-
-          let feedbackInstruction = 'NO feedback - do not include any feedback fields';
-          if (aiSettings.addFeedback) {
-            if (aiSettings.feedbackSource === 'generic') {
-              if (aiSettings.feedbackLevel === 'question') {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- Include "correctFeedback": "Correct! Great job." at question level
-- Include "incorrectFeedback": "Incorrect. Please review the material." at question level
-- Do NOT include feedback on individual alternatives`;
-              } else {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- For EACH alternative, include "feedback" field
-- For correct alternatives: "Correct! Great job."
-- For incorrect alternatives: "Incorrect."`;
-              }
-            } else if (aiSettings.feedbackSource === 'inherited') {
-              if (aiSettings.feedbackLevel === 'question') {
-                feedbackInstruction = `FEEDBACK (CRITICAL - Extract from document):
-- Look for "Rationale", "Rationale for correct answer", "Explanation", or "Feedback" near each question
-- If found, use it as "correctFeedback" at question level (this is very important - extract the actual rationale text)
-- Set "incorrectFeedback": "Incorrect. Please review the material."
-- If no rationale found in document, leave feedback fields as empty strings "" for manual entry later`;
-              } else {
-                feedbackInstruction = `FEEDBACK (CRITICAL - Extract from document):
-- Look for "Rationale", "Rationale for correct answer", "Explanation", or "Feedback" near each question
-- If found, use it as "feedback" on the correct alternative(s)
-- For incorrect alternatives: set "feedback": "Incorrect."
-- If no rationale found in document, leave feedback fields as empty strings "" for manual entry later`;
-              }
-            } else {
-              // AI generated
-              if (aiSettings.feedbackLevel === 'question') {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- Include "correctFeedback" at question level with positive, educational explanation
-- Include "incorrectFeedback" at question level with helpful guidance
-- Do NOT include feedback on individual alternatives`;
-              } else {
-                feedbackInstruction = `FEEDBACK (REQUIRED):
-- For EACH alternative, include "feedback" field with positive, encouraging tone
-- Correct alternatives: Explain why it's correct
-- Incorrect alternatives: Gently explain why it's wrong and guide toward correct answer`;
-              }
-            }
-          }
-
-          const tagsInstruction = aiSettings.tags.trim() 
-            ? `- Tag each question with: "${aiSettings.tags}"`
-            : '- Do NOT include tags (set tags to empty string "")';
-
-          const documentContent = fileContent?.text || '[No content available]';
-
-          // Build JSON example based on feedback setting
-          let jsonExample;
-          if (!aiSettings.addFeedback) {
-            jsonExample = `{
-  "questions": [
-    {
-      "questionType": "Single Choice",
-      "scoring": "Simple",
-      "questionText": "...",
-      "points": ${aiSettings.points},
-      "tags": "${aiSettings.tags || ''}",
-      "alternatives": [{"text": "...", "correct": true}, {"text": "...", "correct": false}]
-    }
-  ]
-}`;
-          } else if (aiSettings.feedbackLevel === 'question') {
-            jsonExample = `{
-  "questions": [
-    {
-      "questionType": "Single Choice",
-      "scoring": "Simple",
-      "questionText": "...",
-      "points": ${aiSettings.points},
-      "tags": "${aiSettings.tags || ''}",
-      "correctFeedback": "Correct! [explanation from rationale if inherited, or generated]",
-      "incorrectFeedback": "Incorrect. Please review the material.",
-      "alternatives": [
-        {"text": "...", "correct": true},
-        {"text": "...", "correct": false}
-      ]
-    }
-  ]
-}`;
-          } else {
-            jsonExample = `{
-  "questions": [
-    {
-      "questionType": "Single Choice",
-      "scoring": "Simple",
-      "questionText": "...",
-      "points": ${aiSettings.points},
-      "tags": "${aiSettings.tags || ''}",
-      "alternatives": [
-        {"text": "...", "correct": true, "feedback": "[explanation from rationale if inherited, or generated]"},
-        {"text": "...", "correct": false, "feedback": "Incorrect."}
-      ]
-    }
-  ]
-}`;
-
-          if (aiSettings.useAllQuestions) {
-            // Mode 1: Parse and process ALL questions from the file
-            prompt = `You are a quiz question processor. The document below contains quiz questions. Extract and process ALL questions found in the document.
-
-DOCUMENT CONTENT:
-${documentContent}
-
-INSTRUCTIONS:
-1. Find ALL questions in the document
-2. If alternatives/answers are provided, use them EXACTLY as written and IN THE SAME ORDER as in the document
-3. If a correct answer is marked (with *, "correct", ✓, or similar), preserve that as correct
-4. If no alternatives are provided for a question, generate ${aiSettings.numAlts} alternatives
-5. If no correct answer is marked, determine the most appropriate correct answer
-6. PRESERVE the original order of alternatives - do NOT shuffle or reorder them
-
-REQUIREMENTS:
-- ${typeInstruction}
-- ${altsInstruction}
-${difficultyInstruction}
-- ${aiSettings.points} points per question
-${tagsInstruction}
-
-${feedbackInstruction}
-
-OUTPUT FORMAT - Return ONLY valid JSON:
-${jsonExample}
-
-Output ONLY JSON, no other text.`;
-          } else {
-            // Mode 2: Generate N questions based on content
-            prompt = `Based on the following document content, generate ${aiSettings.numQuestions} quiz questions that test understanding of the key concepts.
-
-DOCUMENT CONTENT:
-${documentContent}
-
-REQUIREMENTS:
-- Generate exactly ${aiSettings.numQuestions} questions
-- ${typeInstruction}
-- ${altsInstruction}
-${difficultyInstruction}
-- ${aiSettings.points} points per question
-${tagsInstruction}
-
-${feedbackInstruction}
-
-OUTPUT FORMAT - Return ONLY valid JSON:
-${jsonExample}
-
-Output ONLY JSON, no other text.`;
-          }
+          prompt = `Process these questions:\n\n${aiSettings.pastedQuestions}\n\nRules:\n- Keep alternatives in EXACT order given\n- ${aiSettings.qType === 'Randomize' ? 'Vary between Single/Multiple Choice' : 'Use ' + aiSettings.qType}\n- ${aiSettings.points} points each\n- ${aiSettings.tags ? 'Tags: ' + aiSettings.tags : 'No tags'}\n- ${feedbackInstr}\n\nOutput valid JSON only.`;
+        } else {
+          const content = fileContent?.text || '';
+          prompt = aiSettings.useAllQuestions ?
+            `Extract ALL questions from this document:\n\n${content}\n\nRules:\n- Keep alternatives in EXACT order\n- ${aiSettings.qType === 'As in file' ? 'Preserve question type' : aiSettings.qType}\n- ${aiSettings.points} points each\n- ${feedbackInstr}\n\nOutput valid JSON only.` :
+            `Generate ${aiSettings.numQuestions} questions from:\n\n${content}\n\nRules:\n- ${aiSettings.qType}\n- ${aiSettings.points} points each\n- ${feedbackInstr}\n\nOutput valid JSON only.`;
         }
 
         try {
-          const requestBody = {
-            prompt: prompt
-          };
-
           const res = await fetch('/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody),
-            signal: abortControllerRef.current.signal
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt }), signal: abortControllerRef.current.signal
           });
-          
           const data = await res.json();
-          
-          if (data.error) {
-            throw new Error(data.error);
-          }
-          
-          const text = data.text || '';
+          if (data.error) throw new Error(data.error);
           
           let parsed = null;
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try { parsed = JSON.parse(jsonMatch[0]); } catch (e) {}
-          }
-          if (!parsed) {
-            try { parsed = JSON.parse(text.trim()); } catch (e) {}
-          }
-          if (!parsed) {
-            const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-            if (codeBlockMatch) {
-              try { parsed = JSON.parse(codeBlockMatch[1].trim()); } catch (e) {}
-            }
-          }
+          const jsonMatch = (data.text || '').match(/\{[\s\S]*\}/);
+          if (jsonMatch) try { parsed = JSON.parse(jsonMatch[0]); } catch (e) {}
+          if (!parsed?.questions) throw new Error('Could not parse response.');
           
-          if (!parsed || !parsed.questions) {
-            throw new Error('Could not parse response. Please try again.');
-          }
-          
-          const newQs = (parsed.questions || []).map((q, i) => {
-            const qType = q.questionType || 'Single Choice';
+          const newQs = parsed.questions.map((q, i) => {
             const alts = q.alternatives || [];
             const processedAlts = aiSettings.randomizeAlts ? shuffleArray(alts) : alts;
-            const numAlts = Math.min(processedAlts.length || 4, 5);
-            
+            const hasFb = alts.some(a => a.feedback) || q.correctFeedback || q.incorrectFeedback;
             return {
-              ...createQuestion(),
-              id: Date.now() + i,
-              questionType: qType,
-              scoring: q.scoring || 'Simple',
-              questionText: q.questionText || '',
-              points: String(q.points || 10),
-              tags: q.tags || '',
-              numAlts: numAlts,
-              correctFb: q.correctFeedback || '',
-              incorrectFb: q.incorrectFeedback || '',
+              ...createQuestion(), id: Date.now() + i, questionType: q.questionType || 'Single Choice',
+              scoring: q.scoring || 'Simple', questionText: q.questionText || '', points: String(q.points || 10),
+              tags: q.tags || '', numAlts: Math.min(processedAlts.length || 4, 5),
+              correctFb: q.correctFeedback || '', incorrectFb: q.incorrectFeedback || '', showFeedback: hasFb,
               alternatives: [...processedAlts.slice(0, 5).map(a => ({
-                text: a.text || '', 
-                correct: !!a.correct, 
-                pct: '', 
-                feedback: a.feedback || ''
+                text: a.text || '', correct: !!a.correct, pct: '', feedback: a.feedback || ''
               })), ...Array(5).fill(null)].slice(0, 5).map(a => a || { text: '', correct: false, pct: '', feedback: '' })
             };
           });
           
           setQuestions([...questions, ...newQs]);
-          setLastPrompt(aiMode === 'topic' ? aiSettings.topic : aiMode === 'paste' ? aiSettings.pastedQuestions : 'Generated from document');
-          setShowAIPanel(false);
-          setGenStatus('');
-          setUploadedFile(null);
-          setFileContent(null);
+          setLastPrompt(aiMode === 'topic' ? aiSettings.topic : aiMode === 'paste' ? aiSettings.pastedQuestions : 'From document');
+          setShowAIPanel(false); setGenStatus(''); setUploadedFile(null); setFileContent(null);
         } catch (err) {
-          if (err.name === 'AbortError') {
-            setGenStatus('Generation cancelled.');
-          } else {
-            console.error('Generation error:', err);
-            setGenStatus(`Error: ${err.message}`);
-          }
+          if (err.name === 'AbortError') setGenStatus('Cancelled.');
+          else setGenStatus('Error: ' + err.message);
         }
         setIsGenerating(false);
-        abortControllerRef.current = null;
       };
 
-      const hasAltFeedback = (q) => (q.alternatives || []).some(a => a && (a.feedback || '').trim());
-      const hasQFeedback = (q) => (q.correctFb || '').trim() || (q.incorrectFb || '').trim();
+      const hasAltFeedback = (q) => q.alternatives?.some(a => a?.feedback?.trim());
+      const hasQFeedback = (q) => q.correctFb?.trim() || q.incorrectFb?.trim();
 
       const validateAll = () => {
         const errs = [];
-        try {
-          questions.forEach((q, i) => {
-            const n = i + 1;
-            if (!(q.questionText || '').trim()) errs.push(`Q${n}: Question text required`);
-            if (!q.points || Number(q.points) <= 0) errs.push(`Q${n}: Valid points required`);
-            
-            const alts = (q.alternatives || []).slice(0, q.numAlts || 4);
-            const filled = alts.filter(a => a && (a.text || '').trim());
-            if (filled.length < 2) errs.push(`Q${n}: Need at least 2 alternatives`);
-            
-            const correctCount = alts.filter(a => a && a.correct).length;
-            if (q.questionType === 'Single Choice' && correctCount !== 1) {
-              errs.push(`Q${n}: Single Choice needs exactly 1 correct answer`);
-            }
-            if (q.questionType === 'Multiple Choice') {
-              if (correctCount < 1) errs.push(`Q${n}: Need at least 1 correct answer`);
-              if (correctCount >= (q.numAlts || 4)) errs.push(`Q${n}: Need at least 1 incorrect answer`);
-            }
-          });
-        } catch (err) {
-          errs.push(`Validation error: ${err.message}`);
-        }
-        setErrors(errs);
-        setShowErrors(true);
+        questions.forEach((q, i) => {
+          const n = i + 1;
+          if (!q.questionText.trim()) errs.push('Q' + n + ': Missing question');
+          const alts = q.alternatives.slice(0, q.numAlts).filter(a => a.text.trim());
+          if (alts.length < 2) errs.push('Q' + n + ': Need 2+ alternatives');
+          const correct = alts.filter(a => a.correct).length;
+          if (!correct) errs.push('Q' + n + ': No correct answer');
+          if (q.questionType === 'Single Choice' && correct > 1) errs.push('Q' + n + ': Single Choice allows only 1 correct');
+        });
+        setErrors(errs); setShowErrors(true);
         return errs.length === 0;
       };
 
-      const calculateWeightedPercentages = (alternatives, numAlts) => {
-        const alts = (alternatives || []).slice(0, numAlts);
-        const correctIndices = [];
-        alts.forEach((a, i) => { if (a && a.correct) correctIndices.push(i); });
-        
-        if (correctIndices.length === 0) return alts;
-        
-        const basePercent = Math.floor(100 / correctIndices.length);
-        const remainder = 100 - (basePercent * correctIndices.length);
-        
-        const percentages = {};
-        correctIndices.forEach((idx, i) => {
-          percentages[idx] = basePercent + (i < remainder ? 1 : 0);
-        });
-        
-        return alts.map((a, i) => ({
-          ...a,
-          pct: a && a.correct ? String(percentages[i] || 0) : '0'
-        }));
-      };
-
       const exportCsv = () => {
-        try {
-          if (!validateAll()) return;
-          
-          const headers = ['Question Type','Instruction Type','Instruction Content','Question','Points','Question Tags','Scoring','Formula','Correct Answer','Correct','Number Alternative','Alternatives','Percentage','Left Side','Right Side','Calculation','Answer','Feedback Type','Alternative Feedback','Correct Feedback','Incorrect Feedback'];
-          const rows = [headers];
-          
-          questions.forEach(q => {
-            const numAlts = q.numAlts || 4;
-            let alts = (q.alternatives || []).slice(0, numAlts).filter(a => a && (a.text || '').trim());
-            const correctCount = alts.filter(a => a && a.correct).length;
-            const code = q.questionType === 'Single Choice' ? 'SC' : 'MC';
-            const fbMode = hasAltFeedback(q) ? 'alt' : hasQFeedback(q) ? 'q' : 'none';
-            
-            if (code === 'MC' && q.scoring === 'Weighted') {
-              alts = calculateWeightedPercentages(alts, alts.length);
-            }
-            
-            alts.forEach((alt, idx) => {
-              const row = Array(21).fill('');
-              row[0] = idx === 0 ? code : '-';
-              if (idx === 0) {
-                row[3] = q.questionText || '';
-                row[4] = q.points || '';
-                row[5] = q.tags || '';
-                row[6] = code === 'MC' ? (q.scoring || 'Simple') : '';
-                row[8] = code === 'MC' ? String(correctCount) : '';
-                row[10] = String(alts.length);
-              }
-              row[9] = alt && alt.correct ? 'TRUE' : 'FALSE';
-              row[11] = (alt && alt.text) || '';
-              
-              if (code === 'MC' && q.scoring === 'Weighted') {
-                row[12] = (alt && alt.correct) ? (alt.pct || '0') : '0';
-              }
-              
-              if (fbMode === 'alt') { 
-                row[17] = 'Alternative'; 
-                row[18] = (alt && alt.feedback) || ''; 
-              }
-              if (fbMode === 'q' && idx === 0) { 
-                row[17] = 'Question'; 
-                row[19] = q.correctFb || ''; 
-                row[20] = q.incorrectFb || ''; 
-              }
-              rows.push(row);
-            });
-            rows.push(Array(21).fill(''));
+        if (!validateAll()) return;
+        const headers = ['Question Type','Instruction Type','Instruction Content','Question','Points','Question Tags','Scoring','Formula','Correct Answer','Correct','Number Alternative','Alternatives','Percentage','Left Side','Right Side','Calculation','Answer','Feedback Type','Alternative Feedback','Correct Feedback','Incorrect Feedback'];
+        const rows = [];
+        questions.forEach(q => {
+          const alts = q.alternatives.slice(0, q.numAlts).filter(a => a.text.trim());
+          const correctCount = alts.filter(a => a.correct).length;
+          const hasFb = hasAltFeedback(q), hasQFb = hasQFeedback(q);
+          const feedbackType = hasFb ? 'Alternative' : hasQFb ? 'Question' : '';
+          alts.forEach((alt, ai) => {
+            const row = Array(21).fill('');
+            row[0] = ai === 0 ? (q.questionType === 'Single Choice' ? 'SC' : 'MC') : '-';
+            row[3] = ai === 0 ? q.questionText : '';
+            row[4] = ai === 0 ? q.points : '';
+            row[5] = ai === 0 ? q.tags : '';
+            row[6] = ai === 0 && q.questionType === 'Multiple Choice' ? q.scoring : '';
+            row[8] = ai === 0 && q.questionType === 'Multiple Choice' ? String(correctCount) : '';
+            row[9] = alt.correct ? 'TRUE' : 'FALSE';
+            row[10] = ai === 0 ? String(alts.length) : '';
+            row[11] = alt.text;
+            row[12] = q.questionType === 'Multiple Choice' && q.scoring === 'Weighted' && alt.correct ? String(Math.round(100/correctCount)) : '';
+            row[17] = ai === 0 ? feedbackType : '';
+            row[18] = hasFb ? alt.feedback : '';
+            row[19] = ai === 0 && hasQFb ? q.correctFb : '';
+            row[20] = ai === 0 && hasQFb ? q.incorrectFb : '';
+            rows.push(row);
           });
-          
-          const csv = rows.map(r => r.map(c => {
-            const s = String(c === null || c === undefined ? '' : c);
-            return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g,'""')}"` : s;
-          }).join(',')).join('\n');
-          
-          // Create unique filename with timestamp
-          const now = new Date();
-          const timestamp = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
-          const filename = `quiz_export_${timestamp}.csv`;
-          
-          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        } catch (err) {
-          alert('Export failed: ' + err.message);
-        }
-      };
-
-      const clearAll = () => {
-        setQuestions([]);
-        setLastPrompt('');
-        setShowAddMenu(false);
-        setShowAIPanel(false);
-        setErrors([]);
-        setShowErrors(false);
-        setUploadedFile(null);
-        setFileContent(null);
-        setAiSettings({
-          topic: '',
-          pastedQuestions: '',
-          numQuestions: 5,
-          points: 10,
-          qType: 'Single Choice',
-          numAlts: 4,
-          tags: '',
-          difficulty: 'N/A',
-          addFeedback: false,
-          feedbackLevel: 'question',
-          feedbackSource: 'ai',
-          useAllQuestions: true,
-          randomizeAlts: false
+          rows.push(Array(21).fill(''));
         });
+        const escape = (v) => { const s = String(v); return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; };
+        const csv = [headers.map(escape).join(','), ...rows.map(r => r.map(escape).join(','))].join('\r\n');
+        const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+        const now = new Date();
+        const ts = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0') + String(now.getSeconds()).padStart(2,'0');
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'quiz_export_' + ts + '.csv'; a.click();
       };
 
-      const inputStyle = {
-        width: '100%', padding: '8px 12px', backgroundColor: '#fff', color: '#333',
-        border: '1px solid #ddd', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box'
-      };
-
-      const btnPrimary = {
-        padding: '8px 16px', backgroundColor: '#f37021', color: 'white',
-        border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: '500', fontSize: '14px'
-      };
-
-      const btnSecondary = {
-        padding: '8px 16px', backgroundColor: '#fff', color: '#666',
-        border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontWeight: '500', fontSize: '14px'
-      };
-
-      const checkboxStyle = {
-        display: 'flex', alignItems: 'center', gap: '8px', marginTop: '16px', cursor: 'pointer', fontSize: '14px', color: '#333'
-      };
+      const inputStyle = { width: '100%', padding: '10px 12px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '14px' };
+      const btnPrimary = { padding: '10px 20px', backgroundColor: '#f37021', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: '500', fontSize: '14px' };
+      const btnSecondary = { padding: '8px 16px', backgroundColor: '#f5f5f5', color: '#333', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' };
+      const checkboxStyle = { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '16px', cursor: 'pointer', fontSize: '14px', color: '#333' };
 
       return (
-        <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5', color: '#333', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: '0' }}>
-          {/* Header */}
-          <div style={{ backgroundColor: '#fff', borderBottom: '1px solid #ddd', padding: '16px 24px' }}>
-            <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }} onClick={clearAll}>
-                <div style={{ width: '8px', height: '32px', backgroundColor: '#f37021', borderRadius: '2px' }}></div>
-                <div>
-                  <h1 style={{ fontSize: '22px', fontWeight: '600', margin: 0, color: '#333' }}>Quiz Builder</h1>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                {questions.length > 0 && (
-                  <>
-                    <span style={{ color: '#666', fontSize: '14px', marginRight: '8px' }}>{questions.length} question(s)</span>
-                    <button onClick={clearAll} style={btnSecondary}>Start Over</button>
-                    <button onClick={exportCsv} style={{ ...btnPrimary, backgroundColor: '#5cb85c' }}>Export CSV</button>
-                  </>
-                )}
-                <div style={{ position: 'relative' }}>
-                  <button onClick={() => setShowAddMenu(!showAddMenu)} style={btnPrimary}>+ Add Questions ▾</button>
-                  {showAddMenu && (
-                    <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', minWidth: '220px', zIndex: 100 }}>
-                      <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
-                        <span style={{ fontSize: '18px' }}>✨</span>
-                        <div><div style={{ fontWeight: '500' }}>AI Generate</div><div style={{ fontSize: '12px', color: '#888' }}>Describe a topic</div></div>
-                      </button>
-                      <button onClick={() => { setAiMode('paste'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
-                        <span style={{ fontSize: '18px' }}>📋</span>
-                        <div><div style={{ fontWeight: '500' }}>Paste Questions</div><div style={{ fontSize: '12px', color: '#888' }}>AI creates alternatives</div></div>
-                      </button>
-                      <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); setAiSettings(s => ({ ...s, qType: s.useAllQuestions ? 'As in file' : 'Single Choice', numAlts: s.useAllQuestions ? 'As in file' : 4 })); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
-                        <span style={{ fontSize: '18px' }}>📄</span>
-                        <div><div style={{ fontWeight: '500' }}>From Document</div><div style={{ fontSize: '12px', color: '#888' }}>PDF, Word, PowerPoint, or text</div></div>
-                      </button>
-                      <button onClick={() => { setQuestions([...questions, createQuestion()]); setShowAddMenu(false); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333' }}>
-                        <span style={{ fontSize: '18px' }}>✏️</span>
-                        <div><div style={{ fontWeight: '500' }}>Manual Entry</div><div style={{ fontSize: '12px', color: '#888' }}>Create from scratch</div></div>
-                      </button>
+        <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
+          <div style={{ backgroundColor: '#fff', padding: '12px 24px', borderBottom: '2px solid #f37021', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
+            <h1 style={{ margin: 0, color: '#333', fontSize: '20px', fontWeight: '600' }}>Quiz Builder</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {questions.length > 0 && <span style={{ color: '#666', fontSize: '14px' }}>{questions.length} question(s)</span>}
+              {questions.length > 0 && <button onClick={clearAll} style={btnSecondary}>Start Over</button>}
+              {questions.length > 0 && <button onClick={exportCsv} style={{ ...btnPrimary, backgroundColor: '#5cb85c' }}>Export CSV</button>}
+              <div style={{ position: 'relative' }}>
+                <button onClick={() => setShowAddMenu(!showAddMenu)} style={btnPrimary}>+ Add Questions</button>
+                {showAddMenu && (
+                  <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', backgroundColor: '#fff', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', minWidth: '220px', zIndex: 200 }}>
+                    <div onClick={() => { setAiMode('topic'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); }} style={{ padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ fontSize: '20px' }}>✨</span>
+                      <div><div style={{ fontWeight: '500' }}>AI Generate</div><div style={{ fontSize: '12px', color: '#888' }}>AI creates questions from topic</div></div>
                     </div>
-                  )}
-                </div>
+                    <div onClick={() => { setAiMode('paste'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); }} style={{ padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ fontSize: '20px' }}>📋</span>
+                      <div><div style={{ fontWeight: '500' }}>Paste Questions</div><div style={{ fontSize: '12px', color: '#888' }}>AI processes & formats</div></div>
+                    </div>
+                    <div onClick={() => { setAiMode('upload'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); }} style={{ padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ fontSize: '20px' }}>📄</span>
+                      <div><div style={{ fontWeight: '500' }}>From Document</div><div style={{ fontSize: '12px', color: '#888' }}>PDF, Word, PowerPoint</div></div>
+                    </div>
+                    <div onClick={() => { setQuestions([...questions, createQuestion()]); setShowAddMenu(false); }} style={{ padding: '12px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ fontSize: '20px' }}>✏️</span>
+                      <div><div style={{ fontWeight: '500' }}>Manual Entry</div><div style={{ fontSize: '12px', color: '#888' }}>Create from scratch</div></div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -878,448 +318,227 @@ Output ONLY JSON, no other text.`;
           {showAddMenu && <div onClick={() => setShowAddMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 50 }} />}
 
           <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
-
-          {/* Last Prompt */}
-          {lastPrompt && questions.length > 0 && (
-            <div style={{ marginBottom: '20px', padding: '14px 18px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                    <span style={{ color: '#f37021', fontSize: '14px' }}>✨</span>
-                    <span style={{ color: '#888', fontSize: '12px', fontWeight: '500', textTransform: 'uppercase' }}>Last AI Prompt</span>
+            {lastPrompt && questions.length > 0 && (
+              <div style={{ marginBottom: '20px', padding: '14px 18px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                      <span style={{ color: '#f37021', fontSize: '14px' }}>✨</span>
+                      <span style={{ color: '#888', fontSize: '12px', fontWeight: '500', textTransform: 'uppercase' }}>Last AI Prompt</span>
+                    </div>
+                    <p style={{ margin: 0, color: '#333', fontSize: '14px', lineHeight: '1.5' }}>{lastPrompt}</p>
                   </div>
-                  <p style={{ margin: 0, color: '#333', fontSize: '14px', lineHeight: '1.5' }}>{lastPrompt}</p>
+                  <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setGenStatus(''); }} style={btnSecondary}>Edit & Regenerate</button>
                 </div>
-                <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setGenStatus(''); }} style={btnSecondary}>Edit & Regenerate</button>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* AI Panel Modal */}
-          {showAIPanel && (
-            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-              <div style={{ backgroundColor: '#fff', borderRadius: '6px', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
-                <div style={{ padding: '18px 20px', borderBottom: '1px solid #ddd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h2 style={{ margin: 0, color: '#333', fontSize: '18px', fontWeight: '600' }}>✨ AI Quiz Generator</h2>
-                  <button onClick={() => { setShowAIPanel(false); cancelGeneration(); }} style={{ background: 'none', border: 'none', color: '#999', fontSize: '24px', cursor: 'pointer', lineHeight: 1 }}>×</button>
-                </div>
-                
-                <div style={{ display: 'flex', borderBottom: '1px solid #ddd' }}>
-                  {[['topic', '💡 Topic'], ['paste', '📋 Paste'], ['upload', '📄 Upload']].map(([id, label]) => (
-                    <button key={id} onClick={() => { setAiMode(id); setGenStatus(''); if (id === 'upload') setAiSettings(s => ({ ...s, qType: s.useAllQuestions ? 'As in file' : 'Single Choice', numAlts: s.useAllQuestions ? 'As in file' : 4 })); }} style={{ flex: 1, padding: '12px', backgroundColor: aiMode === id ? '#fff' : '#f9f9f9', color: aiMode === id ? '#f37021' : '#666', border: 'none', borderBottom: aiMode === id ? '2px solid #f37021' : '2px solid transparent', cursor: 'pointer', fontWeight: '500', fontSize: '14px' }}>{label}</button>
-                  ))}
-                </div>
-                
-                <div style={{ padding: '20px' }}>
-                  {aiMode === 'topic' && (
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '13px', fontWeight: '500' }}>Describe exactly what you want</label>
-                      <textarea value={aiSettings.topic} onChange={e => setAiSettings({ ...aiSettings, topic: e.target.value })} placeholder="e.g., Create 10 quiz questions about bloodborne pathogens for healthcare workers. Randomize between Single Choice and Multiple Choice. 10 points each. Include encouraging feedback." rows={6} style={{ ...inputStyle, resize: 'vertical' }} />
-                      <p style={{ margin: '8px 0 0', color: '#999', fontSize: '12px' }}>
-                        💡 AI interprets your full request. Specify: questions, types, scoring, points, tags (only if needed), feedback.
-                      </p>
-                    </div>
-                  )}
+            {showAIPanel && (
+              <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+                <div style={{ backgroundColor: '#fff', borderRadius: '6px', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+                  <div style={{ padding: '18px 20px', borderBottom: '1px solid #ddd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h2 style={{ margin: 0, color: '#333', fontSize: '18px', fontWeight: '600' }}>✨ AI Quiz Generator</h2>
+                    <button onClick={() => { setShowAIPanel(false); cancelGeneration(); }} style={{ background: 'none', border: 'none', color: '#999', fontSize: '24px', cursor: 'pointer' }}>×</button>
+                  </div>
                   
-                  {aiMode === 'paste' && (
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '13px', fontWeight: '500' }}>Paste your questions</label>
-                      <textarea value={aiSettings.pastedQuestions} onChange={e => setAiSettings({ ...aiSettings, pastedQuestions: e.target.value })} placeholder={"Questions only:\nWhat is the maximum time to report a HIPAA breach?\n\nOr with alternatives (mark correct with *):\nWhat is a bloodborne pathogen? A) Digestive bacterium B) *Microorganism in blood C) Cold virus"} rows={7} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '13px' }} />
-                      <p style={{ margin: '8px 0 0', color: '#999', fontSize: '12px' }}>
-                        💡 Paste questions only (AI generates alternatives) or include alternatives. Mark correct with *.
-                      </p>
-                    </div>
-                  )}
+                  <div style={{ display: 'flex', borderBottom: '1px solid #ddd' }}>
+                    {[['topic', '💡 Topic'], ['paste', '📋 Paste'], ['upload', '📄 Upload']].map(([id, label]) => (
+                      <button key={id} onClick={() => { setAiMode(id); setGenStatus(''); }} style={{ flex: 1, padding: '12px', backgroundColor: aiMode === id ? '#fff' : '#f9f9f9', color: aiMode === id ? '#f37021' : '#666', border: 'none', borderBottom: aiMode === id ? '2px solid #f37021' : '2px solid transparent', cursor: 'pointer', fontWeight: '500' }}>{label}</button>
+                    ))}
+                  </div>
                   
-                  {aiMode === 'upload' && (
-                    <div>
-                      <div 
-                        onClick={() => fileInputRef.current?.click()} 
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                        style={{ 
-                          border: `2px dashed ${isDragging ? '#f37021' : '#ddd'}`, 
-                          borderRadius: '6px', 
-                          padding: '40px', 
-                          textAlign: 'center', 
-                          cursor: 'pointer', 
-                          backgroundColor: isDragging ? '#fff5f0' : '#fafafa',
-                          transition: 'all 0.2s'
-                        }}
-                      >
-                        <input ref={fileInputRef} type="file" onChange={handleFileInput} accept=".pdf,.txt,.doc,.docx,.ppt,.pptx" style={{ display: 'none' }} />
-                        {uploadedFile ? <p style={{ color: '#5cb85c', margin: 0, fontWeight: '500' }}>📄 {uploadedFile.name}</p> : (
-                          <div>
-                            <div style={{ fontSize: '32px', marginBottom: '8px' }}>📁</div>
-                            <p style={{ color: '#888', margin: 0 }}>Drag & drop or click to upload</p>
-                            <p style={{ color: '#aaa', margin: '8px 0 0', fontSize: '12px' }}>PDF, Word, PowerPoint, or Text files</p>
+                  <div style={{ padding: '20px' }}>
+                    {aiMode === 'topic' && (
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '13px', fontWeight: '500' }}>Describe what you want</label>
+                        <textarea value={aiSettings.topic} onChange={e => setAiSettings({ ...aiSettings, topic: e.target.value })} placeholder="e.g., Create 10 quiz questions about bloodborne pathogens for healthcare workers. Randomize between Single Choice and Multiple Choice. 10 points each. Include encouraging feedback." rows={6} style={{ ...inputStyle, resize: 'vertical' }} />
+                        <p style={{ margin: '8px 0 0', color: '#999', fontSize: '12px' }}>💡 AI interprets your full request. Specify: questions, types, scoring, points, tags (only if needed), feedback.</p>
+                      </div>
+                    )}
+                    
+                    {aiMode === 'paste' && (
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '13px', fontWeight: '500' }}>Paste your questions</label>
+                        <textarea value={aiSettings.pastedQuestions} onChange={e => setAiSettings({ ...aiSettings, pastedQuestions: e.target.value })} placeholder={"Questions only:\nWhat is the maximum time to report a HIPAA breach?\n\nOr with alternatives (mark correct with *):\nWhat is a bloodborne pathogen? A) Digestive bacterium B) *Microorganism in blood C) Cold virus"} rows={6} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '13px' }} />
+                        <p style={{ margin: '8px 0 0', color: '#999', fontSize: '12px' }}>💡 Paste questions only (AI generates alternatives) or include alternatives. Mark correct with *.</p>
+                        
+                        <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                          <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Points</label><input type="number" value={aiSettings.points} onChange={e => setAiSettings({ ...aiSettings, points: +e.target.value })} style={inputStyle} /></div>
+                          <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label><select value={aiSettings.qType} onChange={e => setAiSettings({ ...aiSettings, qType: e.target.value })} style={inputStyle}><option>Single Choice</option><option>Multiple Choice</option><option>Randomize</option></select></div>
+                          <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label><select value={aiSettings.numAlts} onChange={e => setAiSettings({ ...aiSettings, numAlts: +e.target.value })} style={inputStyle}>{[2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}</select></div>
+                          <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Difficulty</label><select value={aiSettings.difficulty} onChange={e => setAiSettings({ ...aiSettings, difficulty: e.target.value })} style={inputStyle}><option>N/A</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
+                          <div style={{ gridColumn: 'span 2' }}><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Tags</label><input value={aiSettings.tags} onChange={e => setAiSettings({ ...aiSettings, tags: e.target.value })} placeholder="Leave blank for no tags" style={inputStyle} /></div>
+                        </div>
+                        
+                        <label style={checkboxStyle}><input type="checkbox" checked={aiSettings.randomizeAlts} onChange={e => setAiSettings({ ...aiSettings, randomizeAlts: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />Randomize alternatives</label>
+                        <label style={checkboxStyle}><input type="checkbox" checked={aiSettings.addFeedback} onChange={e => setAiSettings({ ...aiSettings, addFeedback: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />Add Feedback</label>
+                        
+                        {aiSettings.addFeedback && (
+                          <div style={{ marginLeft: '26px', marginTop: '8px', padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+                            {aiSettings.qType === 'Single Choice' && (
+                              <div style={{ marginBottom: '12px' }}>
+                                <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Level</label>
+                                <div style={{ display: 'flex', gap: '16px' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}><input type="radio" checked={aiSettings.feedbackLevel === 'question'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'question' })} style={{ accentColor: '#f37021' }} />Question</label>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}><input type="radio" checked={aiSettings.feedbackLevel === 'alternative'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'alternative' })} style={{ accentColor: '#f37021' }} />Alternative</label>
+                                </div>
+                              </div>
+                            )}
+                            <div>
+                              <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Source</label>
+                              <select value={aiSettings.feedbackSource} onChange={e => setAiSettings({ ...aiSettings, feedbackSource: e.target.value })} style={inputStyle}>
+                                <option value="ai">AI Generated</option>
+                                <option value="generic">Generic</option>
+                                <option value="inherited">Inherited (from source)</option>
+                              </select>
+                              <p style={{ margin: '6px 0 0', color: '#888', fontSize: '11px' }}>
+                                {aiSettings.feedbackSource === 'ai' && 'AI will create encouraging, educational feedback'}
+                                {aiSettings.feedbackSource === 'generic' && 'Simple feedback: "Correct!" / "Incorrect"'}
+                                {aiSettings.feedbackSource === 'inherited' && 'Use rationale from your content if available'}
+                              </p>
+                            </div>
                           </div>
                         )}
                       </div>
-                      <p style={{ margin: '12px 0 0', color: '#999', fontSize: '12px' }}>
-                        💡 Upload training materials, protocols, or policy documents.
-                      </p>
-                    </div>
-                  )}
-                  
-                  {/* Paste Settings */}
-                  {aiMode === 'paste' && (
-                    <div style={{ marginTop: '20px' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Points Each</label>
-                          <input type="number" value={aiSettings.points} onChange={e => setAiSettings({ ...aiSettings, points: +e.target.value })} style={inputStyle} />
+                    )}
+                    
+                    {aiMode === 'upload' && (
+                      <div>
+                        <div onClick={() => fileInputRef.current?.click()} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} style={{ border: '2px dashed ' + (isDragging ? '#f37021' : '#ddd'), borderRadius: '6px', padding: '40px', textAlign: 'center', cursor: 'pointer', backgroundColor: isDragging ? '#fff5f0' : '#fafafa' }}>
+                          <input ref={fileInputRef} type="file" onChange={handleFileInput} accept=".pdf,.txt,.docx,.pptx" style={{ display: 'none' }} />
+                          {uploadedFile ? <p style={{ color: '#5cb85c', margin: 0, fontWeight: '500' }}>📄 {uploadedFile.name}</p> : <div><div style={{ fontSize: '32px', marginBottom: '8px' }}>📁</div><p style={{ color: '#888', margin: 0 }}>Drop file or click to upload</p><p style={{ color: '#aaa', margin: '8px 0 0', fontSize: '12px' }}>PDF, Word, PowerPoint, Text</p></div>}
                         </div>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label>
-                          <select value={aiSettings.qType} onChange={e => setAiSettings({ ...aiSettings, qType: e.target.value })} style={inputStyle}>
-                            <option>Single Choice</option>
-                            <option>Multiple Choice</option>
-                            <option>Randomize</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label>
-                          <select value={aiSettings.numAlts} onChange={e => setAiSettings({ ...aiSettings, numAlts: +e.target.value })} style={inputStyle}>
-                            {[2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Difficulty</label>
-                          <select value={aiSettings.difficulty} onChange={e => setAiSettings({ ...aiSettings, difficulty: e.target.value })} style={inputStyle}>
-                            <option>N/A</option>
-                            <option>Easy</option>
-                            <option>Medium</option>
-                            <option>Hard</option>
-                            <option>Randomize</option>
-                          </select>
-                        </div>
-                        <div style={{ gridColumn: 'span 2' }}>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Tags (optional)</label>
-                          <input value={aiSettings.tags} onChange={e => setAiSettings({ ...aiSettings, tags: e.target.value })} placeholder="Leave blank for no tags" style={inputStyle} />
-                        </div>
-                      </div>
-                      
-                      <label style={checkboxStyle}>
-                        <input type="checkbox" checked={aiSettings.randomizeAlts} onChange={e => setAiSettings({ ...aiSettings, randomizeAlts: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
-                        Randomize alternatives
-                      </label>
-                      
-                      <label style={checkboxStyle}>
-                        <input type="checkbox" checked={aiSettings.addFeedback} onChange={e => setAiSettings({ ...aiSettings, addFeedback: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
-                        Add Feedback
-                      </label>
-                      
-                      {aiSettings.addFeedback && (
-                        <div style={{ marginLeft: '26px', marginTop: '8px', padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
-                          {(aiSettings.qType === 'Single Choice' || aiSettings.qType === 'Randomize') && (
-                            <div style={{ marginBottom: '12px' }}>
-                              <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Level</label>
-                              <div style={{ display: 'flex', gap: '16px' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
-                                  <input type="radio" name="feedbackLevel" checked={aiSettings.feedbackLevel === 'question'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'question' })} style={{ accentColor: '#f37021' }} />
-                                  Question Level
-                                </label>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
-                                  <input type="radio" name="feedbackLevel" checked={aiSettings.feedbackLevel === 'alternative'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'alternative' })} style={{ accentColor: '#f37021' }} />
-                                  Alternative Level
-                                </label>
+                        <p style={{ margin: '12px 0 0', color: '#999', fontSize: '12px' }}>💡 Upload training materials, protocols, or policy documents.</p>
+                        
+                        <div style={{ marginTop: '16px' }}>
+                          <label style={checkboxStyle}><input type="checkbox" checked={aiSettings.useAllQuestions} onChange={e => setAiSettings({ ...aiSettings, useAllQuestions: e.target.checked, qType: e.target.checked ? 'As in file' : 'Single Choice' })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />Use all questions from file</label>
+                          <p style={{ margin: '4px 0 16px 26px', color: '#888', fontSize: '12px' }}>{aiSettings.useAllQuestions ? 'AI will process all questions found in your document' : 'AI will generate new questions based on the content'}</p>
+                          
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                            {!aiSettings.useAllQuestions && <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}># Questions</label><input type="number" value={aiSettings.numQuestions} onChange={e => setAiSettings({ ...aiSettings, numQuestions: +e.target.value })} style={inputStyle} /></div>}
+                            <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Points</label><input type="number" value={aiSettings.points} onChange={e => setAiSettings({ ...aiSettings, points: +e.target.value })} style={inputStyle} /></div>
+                            <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label><select value={aiSettings.qType} onChange={e => setAiSettings({ ...aiSettings, qType: e.target.value })} style={inputStyle}>{aiSettings.useAllQuestions && <option>As in file</option>}<option>Single Choice</option><option>Multiple Choice</option></select></div>
+                            <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Tags</label><input value={aiSettings.tags} onChange={e => setAiSettings({ ...aiSettings, tags: e.target.value })} style={inputStyle} /></div>
+                          </div>
+                          
+                          <label style={checkboxStyle}><input type="checkbox" checked={aiSettings.randomizeAlts} onChange={e => setAiSettings({ ...aiSettings, randomizeAlts: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />Randomize alternatives</label>
+                          <label style={checkboxStyle}><input type="checkbox" checked={aiSettings.addFeedback} onChange={e => setAiSettings({ ...aiSettings, addFeedback: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />Add Feedback</label>
+                          
+                          {aiSettings.addFeedback && (
+                            <div style={{ marginLeft: '26px', marginTop: '8px', padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+                              {(aiSettings.qType === 'Single Choice' || aiSettings.qType === 'As in file') && (
+                                <div style={{ marginBottom: '12px' }}>
+                                  <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Level</label>
+                                  <div style={{ display: 'flex', gap: '16px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}><input type="radio" checked={aiSettings.feedbackLevel === 'question'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'question' })} style={{ accentColor: '#f37021' }} />Question</label>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}><input type="radio" checked={aiSettings.feedbackLevel === 'alternative'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'alternative' })} style={{ accentColor: '#f37021' }} />Alternative</label>
+                                  </div>
+                                </div>
+                              )}
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Source</label>
+                                <select value={aiSettings.feedbackSource} onChange={e => setAiSettings({ ...aiSettings, feedbackSource: e.target.value })} style={inputStyle}>
+                                  <option value="ai">AI Generated</option>
+                                  <option value="generic">Generic</option>
+                                  <option value="inherited">Inherited (from document)</option>
+                                </select>
+                                <p style={{ margin: '6px 0 0', color: '#888', fontSize: '11px' }}>
+                                  {aiSettings.feedbackSource === 'ai' && 'AI will create encouraging, educational feedback'}
+                                  {aiSettings.feedbackSource === 'generic' && 'Simple feedback: "Correct!" / "Incorrect"'}
+                                  {aiSettings.feedbackSource === 'inherited' && 'Use rationale from your document if available'}
+                                </p>
                               </div>
                             </div>
                           )}
-                          <div>
-                            <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Source</label>
-                            <select value={aiSettings.feedbackSource} onChange={e => setAiSettings({ ...aiSettings, feedbackSource: e.target.value })} style={inputStyle}>
-                              <option value="ai">AI Generated</option>
-                              <option value="generic">Generic</option>
-                              <option value="inherited">Inherited (from source)</option>
-                            </select>
-                            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '11px' }}>
-                              {aiSettings.feedbackSource === 'ai' && 'AI will create encouraging, educational feedback'}
-                              {aiSettings.feedbackSource === 'generic' && 'Simple feedback: "Correct!" / "Incorrect"'}
-                              {aiSettings.feedbackSource === 'inherited' && 'Use rationale from your content if available'}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Upload Settings */}
-                  {aiMode === 'upload' && (
-                    <div style={{ marginTop: '20px' }}>
-                      <label style={checkboxStyle}>
-                        <input type="checkbox" checked={aiSettings.useAllQuestions} onChange={e => setAiSettings({ ...aiSettings, useAllQuestions: e.target.checked, qType: e.target.checked ? 'As in file' : 'Single Choice', numAlts: e.target.checked ? 'As in file' : 4 })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
-                        Use all questions from file
-                      </label>
-                      <p style={{ margin: '4px 0 16px 26px', color: '#888', fontSize: '12px' }}>
-                        {aiSettings.useAllQuestions ? 'AI will process all questions found in your document' : 'AI will generate new questions based on the content'}
-                      </p>
-                      
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-                        {!aiSettings.useAllQuestions && (
-                          <div>
-                            <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Number of Questions</label>
-                            <input type="number" min="1" max="50" value={aiSettings.numQuestions} onChange={e => setAiSettings({ ...aiSettings, numQuestions: Math.max(1, +e.target.value) })} style={inputStyle} />
-                          </div>
-                        )}
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Points Each</label>
-                          <input type="number" value={aiSettings.points} onChange={e => setAiSettings({ ...aiSettings, points: +e.target.value })} style={inputStyle} />
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label>
-                          <select value={aiSettings.qType} onChange={e => setAiSettings({ ...aiSettings, qType: e.target.value })} style={inputStyle}>
-                            {aiSettings.useAllQuestions && <option>As in file</option>}
-                            <option>Single Choice</option>
-                            <option>Multiple Choice</option>
-                            <option>Randomize</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label>
-                          <select value={aiSettings.numAlts} onChange={e => setAiSettings({ ...aiSettings, numAlts: e.target.value })} style={inputStyle}>
-                            {aiSettings.useAllQuestions && <option value="As in file">As in file</option>}
-                            {[2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
-                            <option value="Randomize">Randomize</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Difficulty</label>
-                          <select value={aiSettings.difficulty} onChange={e => setAiSettings({ ...aiSettings, difficulty: e.target.value })} style={inputStyle}>
-                            <option>N/A</option>
-                            <option>Easy</option>
-                            <option>Medium</option>
-                            <option>Hard</option>
-                            <option>Randomize</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Tags (optional)</label>
-                          <input value={aiSettings.tags} onChange={e => setAiSettings({ ...aiSettings, tags: e.target.value })} placeholder="Leave blank for no tags" style={inputStyle} />
                         </div>
                       </div>
-                      
-                      <label style={checkboxStyle}>
-                        <input type="checkbox" checked={aiSettings.randomizeAlts} onChange={e => setAiSettings({ ...aiSettings, randomizeAlts: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
-                        Randomize alternatives
-                      </label>
-                      
-                      <label style={checkboxStyle}>
-                        <input type="checkbox" checked={aiSettings.addFeedback} onChange={e => setAiSettings({ ...aiSettings, addFeedback: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
-                        Add Feedback
-                      </label>
-                      
-                      {aiSettings.addFeedback && (
-                        <div style={{ marginLeft: '26px', marginTop: '8px', padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
-                          {(aiSettings.qType === 'Single Choice' || aiSettings.qType === 'Randomize' || aiSettings.qType === 'As in file') && (
-                            <div style={{ marginBottom: '12px' }}>
-                              <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Level</label>
-                              <div style={{ display: 'flex', gap: '16px' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
-                                  <input type="radio" name="uploadFeedbackLevel" checked={aiSettings.feedbackLevel === 'question'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'question' })} style={{ accentColor: '#f37021' }} />
-                                  Question Level
-                                </label>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
-                                  <input type="radio" name="uploadFeedbackLevel" checked={aiSettings.feedbackLevel === 'alternative'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'alternative' })} style={{ accentColor: '#f37021' }} />
-                                  Alternative Level
-                                </label>
-                              </div>
-                            </div>
-                          )}
-                          <div>
-                            <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Source</label>
-                            <select value={aiSettings.feedbackSource} onChange={e => setAiSettings({ ...aiSettings, feedbackSource: e.target.value })} style={inputStyle}>
-                              <option value="ai">AI Generated</option>
-                              <option value="generic">Generic</option>
-                              <option value="inherited">Inherited (from source)</option>
-                            </select>
-                            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '11px' }}>
-                              {aiSettings.feedbackSource === 'ai' && 'AI will create encouraging, educational feedback'}
-                              {aiSettings.feedbackSource === 'generic' && 'Simple feedback: "Correct!" / "Incorrect"'}
-                              {aiSettings.feedbackSource === 'inherited' && 'Use rationale from your document if available'}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    )}
+                    
+                    {genStatus && (
+                      <div style={{ marginTop: '12px' }}>
+                        {isGenerating && <div style={{ marginBottom: '8px', backgroundColor: '#eee', borderRadius: '4px', overflow: 'hidden' }}><div className="progress-bar"></div></div>}
+                        <p style={{ margin: 0, color: genStatus.includes('Error') || genStatus.includes('Please') ? '#d9534f' : '#666', fontSize: '13px' }}>{genStatus}</p>
+                      </div>
+                    )}
+                  </div>
                   
-                  {genStatus && (
-                    <div style={{ marginTop: '12px' }}>
-                      {isGenerating && (
-                        <div style={{ marginBottom: '8px', backgroundColor: '#eee', borderRadius: '4px', overflow: 'hidden' }}>
-                          <div className="progress-bar"></div>
-                        </div>
-                      )}
-                      <p style={{ padding: '10px', backgroundColor: genStatus.startsWith('Error') || genStatus.startsWith('Please') ? '#fff5f5' : '#f5f5f5', color: genStatus.startsWith('Error') || genStatus.startsWith('Please') ? '#d9534f' : '#666', borderRadius: '4px', fontSize: '13px' }}>{genStatus}</p>
-                    </div>
-                  )}
-                </div>
-                
-                <div style={{ padding: '16px 20px', borderTop: '1px solid #ddd', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: '#fafafa' }}>
-                  {isGenerating ? (
-                    <button onClick={cancelGeneration} style={{ ...btnSecondary, color: '#d9534f', borderColor: '#d9534f' }}>✕ Cancel</button>
-                  ) : (
-                    <button onClick={() => setShowAIPanel(false)} style={btnSecondary}>Close</button>
-                  )}
-                  <button onClick={generateQuestions} disabled={isGenerating} style={{ ...btnPrimary, opacity: isGenerating ? 0.5 : 1 }}>
-                    {isGenerating ? '⏳ Generating...' : '✨ Generate'}
-                  </button>
+                  <div style={{ padding: '16px 20px', borderTop: '1px solid #ddd', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                    {isGenerating && <button onClick={cancelGeneration} style={btnSecondary}>Cancel</button>}
+                    <button onClick={generateQuestions} disabled={isGenerating} style={{ ...btnPrimary, opacity: isGenerating ? 0.7 : 1 }}>{isGenerating ? '⏳ Generating...' : '✨ Generate'}</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Errors */}
-          {showErrors && errors.length > 0 && (
-            <div style={{ marginBottom: '20px', backgroundColor: '#fff', border: '1px solid #d9534f', borderRadius: '4px', padding: '14px 18px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <div>
-                  <strong style={{ color: '#d9534f', fontSize: '14px' }}>⚠️ Validation Errors ({errors.length})</strong>
-                  <ul style={{ margin: '8px 0 0', paddingLeft: '20px', color: '#d9534f', fontSize: '13px' }}>
-                    {errors.map((e, i) => <li key={i}>{e}</li>)}
-                  </ul>
+            {showErrors && errors.length > 0 && <div style={{ marginBottom: '20px', backgroundColor: '#fff', border: '1px solid #f5c6cb', borderRadius: '4px', padding: '14px 18px' }}><strong style={{ color: '#d9534f' }}>⚠️ Errors</strong><ul style={{ margin: '8px 0 0', paddingLeft: '20px', color: '#721c24', fontSize: '13px' }}>{errors.map((e, i) => <li key={i}>{e}</li>)}</ul></div>}
+            {showErrors && errors.length === 0 && questions.length > 0 && <div style={{ marginBottom: '20px', backgroundColor: '#d4edda', borderRadius: '4px', padding: '14px 18px' }}><span style={{ color: '#155724' }}>✓ All questions valid!</span></div>}
+
+            {questions.length === 0 && !showAIPanel && (
+              <div style={{ textAlign: 'center', padding: '60px 20px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #ddd' }}>
+                <div style={{ fontSize: '48px', marginBottom: '16px' }}>📝</div>
+                <h2 style={{ margin: '0 0 8px', color: '#333' }}>Ready to Build Your Quiz</h2>
+                <p style={{ margin: '0 0 24px', color: '#888' }}>Choose how you'd like to add questions</p>
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); }} style={btnPrimary}>✨ AI Generate</button>
+                  <button onClick={() => { setAiMode('paste'); setShowAIPanel(true); }} style={btnSecondary}>📋 Paste Questions</button>
+                  <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); }} style={btnSecondary}>📄 From Document</button>
+                  <button onClick={() => setQuestions([createQuestion()])} style={btnSecondary}>✏️ Manual Entry</button>
                 </div>
-                <button onClick={() => setShowErrors(false)} style={{ background: 'none', border: 'none', color: '#d9534f', fontSize: '20px', cursor: 'pointer' }}>×</button>
               </div>
-            </div>
-          )}
+            )}
 
-          {showErrors && errors.length === 0 && questions.length > 0 && (
-            <div style={{ marginBottom: '20px', backgroundColor: '#fff', border: '1px solid #5cb85c', borderRadius: '4px', padding: '14px 18px' }}>
-              <span style={{ color: '#5cb85c', fontSize: '14px' }}>✓ All {questions.length} question(s) passed validation!</span>
-            </div>
-          )}
-
-          {/* Empty State */}
-          {questions.length === 0 && !showAIPanel && (
-            <div style={{ textAlign: 'center', padding: '60px 20px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd' }}>
-              <div style={{ fontSize: '48px', marginBottom: '16px' }}>📝</div>
-              <h2 style={{ margin: '0 0 8px', color: '#333', fontWeight: '600' }}>Ready to Build Your Quiz</h2>
-              <p style={{ margin: '0 0 24px', color: '#888' }}>Choose how you'd like to add questions</p>
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setGenStatus(''); }} style={{ ...btnPrimary, padding: '14px 24px', fontSize: '15px' }}>✨ AI Generate</button>
-                <button onClick={() => { setAiMode('paste'); setShowAIPanel(true); setGenStatus(''); }} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>📋 Paste Questions</button>
-                <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setGenStatus(''); setAiSettings(s => ({ ...s, qType: s.useAllQuestions ? 'As in file' : 'Single Choice', numAlts: s.useAllQuestions ? 'As in file' : 4 })); }} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>📄 From Document</button>
-                <button onClick={() => setQuestions([createQuestion()])} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>✏️ Manual Entry</button>
-              </div>
-            </div>
-          )}
-
-          {/* Questions */}
-          <div>
             {questions.map((q, qi) => (
-              <div key={q.id} style={{ backgroundColor: '#fff', borderRadius: '4px', padding: '20px', marginBottom: '16px', border: '1px solid #ddd' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #eee' }}>
-                  <h3 style={{ margin: 0, color: '#333', fontSize: '16px', fontWeight: '600' }}>Question {qi + 1}</h3>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={() => { const qs = [...questions]; qs.splice(qi + 1, 0, { ...JSON.parse(JSON.stringify(q)), id: Date.now() }); setQuestions(qs); }} style={btnSecondary}>Duplicate</button>
-                    <button onClick={() => setQuestions(questions.filter((_, i) => i !== qi))} style={{ ...btnSecondary, color: '#d9534f', borderColor: '#d9534f' }}>Delete</button>
-                  </div>
+              <div key={q.id} style={{ marginBottom: '16px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #ddd', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
+                  <span style={{ fontWeight: '600' }}>Question {qi + 1}</span>
+                  <button onClick={() => setQuestions(questions.filter((_, i) => i !== qi))} style={{ background: 'none', border: 'none', color: '#d9534f', cursor: 'pointer' }}>🗑️</button>
                 </div>
-                
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label>
-                    <select value={q.questionType} onChange={e => updateQ(qi, 'questionType', e.target.value)} style={inputStyle}>
-                      <option>Single Choice</option>
-                      <option>Multiple Choice</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '6px', color: q.questionType === 'Single Choice' ? '#aaa' : '#666', fontSize: '13px' }}>Scoring</label>
-                    <select value={q.scoring} onChange={e => updateQ(qi, 'scoring', e.target.value)} disabled={q.questionType === 'Single Choice'} style={{ ...inputStyle, opacity: q.questionType === 'Single Choice' ? 0.5 : 1 }}>
-                      <option>Simple</option>
-                      <option>Weighted</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Points</label>
-                    <input type="number" value={q.points} onChange={e => updateQ(qi, 'points', e.target.value)} style={inputStyle} />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label>
-                    <select value={q.numAlts} onChange={e => updateQ(qi, 'numAlts', +e.target.value)} style={inputStyle}>
-                      {[2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Tags</label>
-                    <input value={q.tags} onChange={e => updateQ(qi, 'tags', e.target.value)} placeholder="optional" style={inputStyle} />
-                  </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '16px' }}>
+                  <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label><select value={q.questionType} onChange={e => updateQ(qi, 'questionType', e.target.value)} style={inputStyle}><option>Single Choice</option><option>Multiple Choice</option></select></div>
+                  {q.questionType === 'Multiple Choice' && <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Scoring</label><select value={q.scoring} onChange={e => updateQ(qi, 'scoring', e.target.value)} style={inputStyle}><option>Simple</option><option>Weighted</option></select></div>}
+                  <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Points</label><input type="number" value={q.points} onChange={e => updateQ(qi, 'points', e.target.value)} style={inputStyle} /></div>
+                  <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label><select value={q.numAlts} onChange={e => updateQ(qi, 'numAlts', +e.target.value)} style={inputStyle}>{[2,3,4,5].map(n => <option key={n}>{n}</option>)}</select></div>
+                  <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Tags</label><input value={q.tags} onChange={e => updateQ(qi, 'tags', e.target.value)} style={inputStyle} /></div>
                 </div>
-                
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Question Text</label>
-                  <textarea value={q.questionText} onChange={e => updateQ(qi, 'questionText', e.target.value)} placeholder="Enter question..." rows={2} style={{ ...inputStyle, resize: 'vertical' }} />
-                </div>
-                
+                <div style={{ marginBottom: '16px' }}><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Question</label><textarea value={q.questionText} onChange={e => updateQ(qi, 'questionText', e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical' }} /></div>
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'block', marginBottom: '10px', color: '#666', fontSize: '13px' }}>Alternatives</label>
-                  {(q.alternatives || []).slice(0, q.numAlts || 4).map((alt, ai) => {
-                    if (!alt) return null;
-                    return (
-                    <div key={ai} style={{ marginBottom: '8px', padding: '10px 12px', backgroundColor: alt.correct ? '#f0fff4' : '#fafafa', borderRadius: '4px', border: `1px solid ${alt.correct ? '#5cb85c' : '#ddd'}` }}>
-                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                        <input type="checkbox" checked={alt.correct || false} onChange={e => updateAlt(qi, ai, 'correct', e.target.checked)} style={{ width: '18px', height: '18px', accentColor: '#5cb85c' }} />
-                        <input value={alt.text || ''} onChange={e => updateAlt(qi, ai, 'text', e.target.value)} placeholder={`Alternative ${ai + 1}`} style={{ ...inputStyle, flex: 1, border: 'none', backgroundColor: 'transparent' }} />
-                        {q.questionType === 'Multiple Choice' && q.scoring === 'Weighted' && (
-                          <div style={{ padding: '6px 10px', backgroundColor: alt.correct ? '#5cb85c' : '#eee', color: alt.correct ? '#fff' : '#999', borderRadius: '4px', fontSize: '13px', minWidth: '45px', textAlign: 'center', fontWeight: '500' }}>
-                            {(() => {
-                              const correctAlts = (q.alternatives || []).slice(0, q.numAlts || 4).filter(a => a && a.correct);
-                              if (!alt.correct || correctAlts.length === 0) return '0%';
-                              const basePercent = Math.floor(100 / correctAlts.length);
-                              const remainder = 100 - (basePercent * correctAlts.length);
-                              const myIndex = correctAlts.indexOf(alt);
-                              return (basePercent + (myIndex < remainder ? 1 : 0)) + '%';
-                            })()}
-                          </div>
-                        )}
+                  {q.alternatives.slice(0, q.numAlts).map((alt, ai) => (
+                    <div key={ai} style={{ marginBottom: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <input type="checkbox" checked={alt.correct} onChange={e => updateAlt(qi, ai, 'correct', e.target.checked)} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
+                        <input value={alt.text} onChange={e => updateAlt(qi, ai, 'text', e.target.value)} placeholder={'Alternative ' + (ai + 1)} style={{ ...inputStyle, flex: 1, backgroundColor: alt.correct ? '#f0fff0' : '#fff' }} />
                       </div>
-                      {q.questionType === 'Single Choice' && (
+                      {q.questionType === 'Single Choice' && (q.showFeedback || hasAltFeedback(q)) && (
                         <div style={{ marginTop: '8px', marginLeft: '30px' }}>
-                          <input value={alt.feedback || ''} onChange={e => updateAlt(qi, ai, 'feedback', e.target.value)} placeholder={alt.correct ? "Feedback: Correct! Explain why..." : "Feedback: Explain why incorrect..."} style={{ ...inputStyle, fontSize: '13px', backgroundColor: '#fff' }} />
+                          <input value={alt.feedback || ''} onChange={e => updateAlt(qi, ai, 'feedback', e.target.value)} placeholder={alt.correct ? 'Feedback: Correct! Explain why...' : 'Feedback: Explain why incorrect...'} style={{ ...inputStyle, fontSize: '13px' }} />
                         </div>
                       )}
                     </div>
-                    );
-                  })}
-                  <p style={{ margin: '8px 0 0', color: '#999', fontSize: '12px' }}>
-                    ☑️ Check to mark correct. {q.questionType === 'Single Choice' ? 'Only 1 allowed.' : q.scoring === 'Weighted' ? 'Percentages auto-calculated.' : 'At least 1 incorrect required.'}
-                  </p>
+                  ))}
+                  <p style={{ margin: '8px 0 0', color: '#999', fontSize: '12px' }}>☑️ Check to mark correct. {q.questionType === 'Single Choice' ? 'Only 1 allowed.' : q.scoring === 'Weighted' ? 'Percentages auto-calculated.' : 'At least 1 incorrect required.'}</p>
                 </div>
-                
+                {q.questionType === 'Single Choice' && !q.showFeedback && !hasAltFeedback(q) && (
+                  <button onClick={() => updateQ(qi, 'showFeedback', true)} style={{ ...btnSecondary, fontSize: '13px', padding: '6px 12px' }}>+ Add Feedback</button>
+                )}
                 {q.questionType === 'Multiple Choice' && (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Correct Feedback</label>
-                      <input value={q.correctFb} onChange={e => updateQ(qi, 'correctFb', e.target.value)} placeholder="Great job! You correctly identified..." style={inputStyle} />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Incorrect Feedback</label>
-                      <input value={q.incorrectFb} onChange={e => updateQ(qi, 'incorrectFb', e.target.value)} placeholder="Review the section on..." style={inputStyle} />
-                    </div>
+                    <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Correct Feedback</label><input value={q.correctFb} onChange={e => updateQ(qi, 'correctFb', e.target.value)} placeholder="Great job! You correctly identified..." style={inputStyle} /></div>
+                    <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Incorrect Feedback</label><input value={q.incorrectFb} onChange={e => updateQ(qi, 'incorrectFb', e.target.value)} placeholder="Review the section on..." style={inputStyle} /></div>
                   </div>
                 )}
               </div>
             ))}
-          </div>
 
-          {/* Footer */}
-          {questions.length > 0 && (
-            <div style={{ marginTop: '20px', padding: '14px 18px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ color: '#666', fontSize: '14px' }}>
-                <strong style={{ color: '#333' }}>{questions.length}</strong> question(s) • 
-                <strong style={{ color: '#333' }}> {questions.reduce((s, q) => s + (+q.points || 0), 0)}</strong> total points
-              </span>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button onClick={clearAll} style={btnSecondary}>Start Over</button>
-                <button onClick={exportCsv} style={{ ...btnPrimary, backgroundColor: '#5cb85c' }}>Export to LMS CSV</button>
+            {questions.length > 0 && (
+              <div style={{ marginTop: '20px', padding: '14px 18px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: '#666' }}><strong>{questions.length}</strong> questions • <strong>{questions.reduce((s, q) => s + (+q.points || 0), 0)}</strong> points</span>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={clearAll} style={btnSecondary}>Start Over</button>
+                  <button onClick={exportCsv} style={{ ...btnPrimary, backgroundColor: '#5cb85c' }}>Export CSV</button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
           </div>
         </div>
       );
