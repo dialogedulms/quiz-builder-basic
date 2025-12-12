@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -114,23 +115,36 @@
       const handleFile = async (file) => {
         if (!file) return;
         setUploadedFile(file);
+        setGenStatus('Reading file...');
         
         try {
           if (file.type === 'application/pdf') {
             const arrayBuffer = await file.arrayBuffer();
             const text = await extractPdfText(arrayBuffer);
             setFileContent({ type: 'text/plain', text: text });
+            setGenStatus('');
+          } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || file.name.endsWith('.docx')) {
+            // Word document
+            const arrayBuffer = await file.arrayBuffer();
+            const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+            setFileContent({ type: 'text/plain', text: result.value });
+            setGenStatus('');
+          } else if (file.type === 'application/msword' || file.name.endsWith('.doc')) {
+            setGenStatus('Note: .doc files are not supported. Please convert to .docx');
+            setFileContent(null);
           } else if (file.type.startsWith('text/') || file.name.endsWith('.txt')) {
             const text = await file.text();
             setFileContent({ type: 'text/plain', text: text });
+            setGenStatus('');
           } else if (file.type.startsWith('image/')) {
             // For images, we'll just note that it's an image - Groq can't process images
             setFileContent({ type: 'image', text: `[Image file: ${file.name}]` });
-            setGenStatus('Note: Image files cannot be processed directly. Please use text or PDF files.');
+            setGenStatus('Note: Image files cannot be processed directly. Please use text, PDF, or Word files.');
           } else {
             // Try to read as text
             const text = await file.text();
             setFileContent({ type: 'text/plain', text: text });
+            setGenStatus('');
           }
         } catch (err) {
           setGenStatus(`Error reading file: ${err.message}`);
@@ -289,7 +303,9 @@ Output ONLY JSON, no other text.`;
             : `${aiSettings.difficulty} difficulty`;
 
           const feedbackInstruction = aiSettings.addFeedback
-            ? `FEEDBACK (REQUIRED): Include encouraging feedback for each question/alternative`
+            ? `FEEDBACK (CRITICAL - MUST INCLUDE):
+- For "Single Choice" questions: Include "feedback" field for EACH alternative with positive, encouraging tone explaining why correct/incorrect
+- For "Multiple Choice" questions: Include "correctFeedback" and "incorrectFeedback" at question level (NOT per alternative)`
             : 'NO feedback - do not include any feedback fields';
 
           const tagsInstruction = aiSettings.tags.trim() 
@@ -297,6 +313,49 @@ Output ONLY JSON, no other text.`;
             : '- Do NOT include tags (set tags to empty string "")';
 
           const documentContent = fileContent?.text || '[No content available]';
+
+          // Build JSON example based on feedback setting
+          const jsonExample = aiSettings.addFeedback 
+            ? `{
+  "questions": [
+    {
+      "questionType": "Single Choice",
+      "scoring": "Simple",
+      "questionText": "...",
+      "points": ${aiSettings.points},
+      "tags": "${aiSettings.tags || ''}",
+      "alternatives": [
+        {"text": "...", "correct": true, "feedback": "Correct! Great job. This is right because..."},
+        {"text": "...", "correct": false, "feedback": "Not quite. The correct answer is... because..."}
+      ]
+    },
+    {
+      "questionType": "Multiple Choice",
+      "scoring": "Simple",
+      "questionText": "...",
+      "points": ${aiSettings.points},
+      "tags": "${aiSettings.tags || ''}",
+      "correctFeedback": "Excellent! You identified all the correct answers.",
+      "incorrectFeedback": "Review this topic. Remember that...",
+      "alternatives": [
+        {"text": "...", "correct": true},
+        {"text": "...", "correct": false}
+      ]
+    }
+  ]
+}`
+            : `{
+  "questions": [
+    {
+      "questionType": "Single Choice",
+      "scoring": "Simple",
+      "questionText": "...",
+      "points": ${aiSettings.points},
+      "tags": "${aiSettings.tags || ''}",
+      "alternatives": [{"text": "...", "correct": true}, {"text": "...", "correct": false}]
+    }
+  ]
+}`;
 
           prompt = `Based on the following document content, generate ${aiSettings.numQuestions} quiz questions that test understanding of the key concepts.
 
@@ -309,23 +368,13 @@ REQUIREMENTS:
 - ${difficultyInstruction}
 - ${aiSettings.points} points per question
 ${tagsInstruction}
+
 ${feedbackInstruction}
 
 OUTPUT FORMAT - Return ONLY valid JSON:
-{
-  "questions": [
-    {
-      "questionType": "Single Choice",
-      "scoring": "Simple",
-      "questionText": "...",
-      "points": ${aiSettings.points},
-      "tags": "${aiSettings.tags || ''}",
-      "alternatives": [{"text": "...", "correct": true}, {"text": "...", "correct": false}]
-    }
-  ]
-}
+${jsonExample}
 
-Output ONLY JSON.`;
+Output ONLY JSON, no other text.`;
         }
 
         try {
@@ -617,7 +666,7 @@ Output ONLY JSON.`;
                       </button>
                       <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setShowAddMenu(false); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
                         <span style={{ fontSize: '18px' }}>📄</span>
-                        <div><div style={{ fontWeight: '500' }}>From Document</div><div style={{ fontSize: '12px', color: '#888' }}>Upload PDF or text file</div></div>
+                        <div><div style={{ fontWeight: '500' }}>From Document</div><div style={{ fontSize: '12px', color: '#888' }}>Upload PDF, Word, or text</div></div>
                       </button>
                       <button onClick={() => { setQuestions([...questions, createQuestion()]); setShowAddMenu(false); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333' }}>
                         <span style={{ fontSize: '18px' }}>✏️</span>
@@ -708,7 +757,7 @@ Output ONLY JSON.`;
                           <div>
                             <div style={{ fontSize: '32px', marginBottom: '8px' }}>📁</div>
                             <p style={{ color: '#888', margin: 0 }}>Drag & drop or click to upload</p>
-                            <p style={{ color: '#aaa', margin: '8px 0 0', fontSize: '12px' }}>PDF or Text files supported</p>
+                            <p style={{ color: '#aaa', margin: '8px 0 0', fontSize: '12px' }}>PDF, Word (.docx), or Text files</p>
                           </div>
                         )}
                       </div>
