@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -162,25 +161,58 @@
         abortControllerRef.current = new AbortController();
 
         let prompt = '';
-        const feedbackInstr = !aiSettings.addFeedback ? 'NO feedback fields' :
-          aiSettings.feedbackSource === 'generic' ? (aiSettings.feedbackLevel === 'question' ? 
-            'Include "correctFeedback": "Correct!" and "incorrectFeedback": "Incorrect."' :
-            'For each alternative include "feedback": "Correct!" or "Incorrect."') :
-          aiSettings.feedbackSource === 'inherited' ? 
-            'Extract "Rationale" from source as correctFeedback. If not found, leave empty ""' :
-          (aiSettings.feedbackLevel === 'question' ? 
-            'Include educational "correctFeedback" and "incorrectFeedback"' :
-            'Include educational "feedback" for each alternative');
+        const jsonExample = `{"questions":[{"questionType":"Single Choice","scoring":"Simple","questionText":"What is X?","points":10,"tags":"","correctFeedback":"","incorrectFeedback":"","alternatives":[{"text":"Option A","correct":true,"feedback":""},{"text":"Option B","correct":false,"feedback":""}]}]}`;
+        
+        const feedbackInstr = !aiSettings.addFeedback ? 'Do NOT include any feedback fields - leave correctFeedback, incorrectFeedback, and alternative feedback as empty strings ""' :
+          aiSettings.feedbackSource === 'generic' ? 'Use generic feedback: correctFeedback="Correct! Great job.", incorrectFeedback="Incorrect. Please review the material."' :
+          aiSettings.feedbackSource === 'inherited' ? 'IMPORTANT: Look for "Rationale for correct answer:" or "Rationale:" in the source text and use that exact text as correctFeedback. For incorrectFeedback use "Incorrect. Please review the material."' :
+          'Create educational feedback explaining why the answer is correct/incorrect';
 
         if (aiMode === 'topic') {
-          prompt = `Generate quiz questions based on: "${aiSettings.topic}"\n\nRules:\n- Follow all specifications exactly\n- Single Choice = 1 correct, Multiple Choice = 2+ correct\n- Only include tags if mentioned\n\nOutput valid JSON:\n{"questions":[{"questionType":"Single Choice","scoring":"Simple","questionText":"...","points":10,"tags":"","correctFeedback":"","incorrectFeedback":"","alternatives":[{"text":"...","correct":true,"feedback":""}]}]}`;
+          prompt = `Generate quiz questions based on: "${aiSettings.topic}"
+
+RULES:
+- Follow all specifications in the request exactly
+- Single Choice = exactly 1 correct answer, Multiple Choice = 2 or more correct
+- Only include tags if explicitly mentioned in the request
+- ${feedbackInstr}
+
+RESPOND WITH ONLY VALID JSON (no markdown, no explanation):
+${jsonExample}`;
         } else if (aiMode === 'paste') {
-          prompt = `Process these questions:\n\n${aiSettings.pastedQuestions}\n\nRules:\n- Keep alternatives in EXACT order given\n- ${aiSettings.qType === 'Randomize' ? 'Vary between Single/Multiple Choice' : 'Use ' + aiSettings.qType}\n- ${aiSettings.points} points each\n- ${aiSettings.tags ? 'Tags: ' + aiSettings.tags : 'No tags'}\n- ${feedbackInstr}\n\nOutput valid JSON only.`;
+          prompt = `Convert these questions to JSON format:
+
+${aiSettings.pastedQuestions}
+
+RULES:
+- Keep alternatives in EXACT order as given
+- Question type: ${aiSettings.qType === 'Randomize' ? 'Vary between Single Choice and Multiple Choice' : aiSettings.qType}
+- Points: ${aiSettings.points} per question
+- Tags: ${aiSettings.tags || 'leave empty ""'}
+- ${feedbackInstr}
+- If correct answer is marked with * or "correct", set that alternative's correct:true
+
+RESPOND WITH ONLY VALID JSON (no markdown, no explanation):
+${jsonExample}`;
         } else {
           const content = fileContent?.text || '';
-          prompt = aiSettings.useAllQuestions ?
-            `Extract ALL questions from this document:\n\n${content}\n\nRules:\n- Keep alternatives in EXACT order\n- ${aiSettings.qType === 'As in file' ? 'Preserve question type' : aiSettings.qType}\n- ${aiSettings.points} points each\n- ${feedbackInstr}\n\nOutput valid JSON only.` :
-            `Generate ${aiSettings.numQuestions} questions from:\n\n${content}\n\nRules:\n- ${aiSettings.qType}\n- ${aiSettings.points} points each\n- ${feedbackInstr}\n\nOutput valid JSON only.`;
+          const extractAll = aiSettings.useAllQuestions;
+          prompt = `${extractAll ? 'Extract ALL quiz questions from this document' : 'Generate ' + aiSettings.numQuestions + ' quiz questions based on this content'}:
+
+${content}
+
+RULES:
+- ${extractAll ? 'Find and extract every question with its alternatives' : 'Create questions based on the content'}
+- Keep alternatives in their EXACT original order (A, B, C, D)
+- Question type: ${aiSettings.qType === 'As in file' ? 'Determine from content - if multiple answers marked correct use Multiple Choice, otherwise Single Choice' : aiSettings.qType}
+- Points: ${aiSettings.points} per question
+- Tags: ${aiSettings.tags || 'leave empty ""'}
+- ${feedbackInstr}
+- For Multiple Choice (2+ correct answers): set scoring to "Simple"
+- Look for answer keys like "Rationale for correct answer: A and B" to determine which alternatives are correct
+
+RESPOND WITH ONLY VALID JSON (no markdown, no code blocks, no explanation):
+${jsonExample}`;
         }
 
         try {
@@ -192,9 +224,30 @@
           if (data.error) throw new Error(data.error);
           
           let parsed = null;
-          const jsonMatch = (data.text || '').match(/\{[\s\S]*\}/);
-          if (jsonMatch) try { parsed = JSON.parse(jsonMatch[0]); } catch (e) {}
-          if (!parsed?.questions) throw new Error('Could not parse response.');
+          let responseText = data.text || '';
+          
+          // Remove markdown code blocks if present
+          responseText = responseText.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+          
+          // Try to find JSON object
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try { 
+              parsed = JSON.parse(jsonMatch[0]); 
+            } catch (e) {
+              // Try to fix common JSON issues
+              let fixed = jsonMatch[0]
+                .replace(/,\s*}/g, '}')  // trailing commas
+                .replace(/,\s*]/g, ']')  // trailing commas in arrays
+                .replace(/'/g, '"');      // single quotes to double
+              try { parsed = JSON.parse(fixed); } catch (e2) {}
+            }
+          }
+          
+          if (!parsed?.questions || !Array.isArray(parsed.questions)) {
+            console.error('Failed to parse:', responseText.substring(0, 500));
+            throw new Error('Could not parse AI response. Please try again.');
+          }
           
           const newQs = parsed.questions.map((q, i) => {
             const alts = q.alternatives || [];
