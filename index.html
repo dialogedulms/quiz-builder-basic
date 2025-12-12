@@ -12,6 +12,19 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    
+    @keyframes progress {
+      0% { width: 0%; }
+      50% { width: 70%; }
+      100% { width: 95%; }
+    }
+    
+    .progress-bar {
+      height: 4px;
+      background: linear-gradient(90deg, #f37021, #ff9a5c);
+      border-radius: 2px;
+      animation: progress 8s ease-out forwards;
+    }
   </style>
 </head>
 <body>
@@ -185,6 +198,24 @@
       };
 
       const generateQuestions = async () => {
+        // Validate inputs first
+        if (aiMode === 'topic' && !aiSettings.topic.trim()) {
+          setGenStatus('Please enter a topic or description for your quiz.');
+          return;
+        }
+        if (aiMode === 'paste' && !aiSettings.pastedQuestions.trim()) {
+          setGenStatus('Please paste your questions in the text area.');
+          return;
+        }
+        if (aiMode === 'upload' && !fileContent) {
+          setGenStatus('Please upload a document first.');
+          return;
+        }
+        if (aiMode === 'upload' && fileContent?.type === 'image') {
+          setGenStatus('Please upload a PDF, Word, or text file. Images are not supported.');
+          return;
+        }
+
         if (generationsUsed >= MAX_GENERATIONS) {
           setGenStatus('Generation limit reached. Please start over or come back later.');
           return;
@@ -194,7 +225,7 @@
         abortControllerRef.current = new AbortController();
 
         setIsGenerating(true);
-        setGenStatus('Generating...');
+        setGenStatus('Generating questions... This may take 10-20 seconds.');
         
         let prompt = '';
         if (aiMode === 'topic') {
@@ -656,15 +687,15 @@ Output ONLY JSON, no other text.`;
                   <button onClick={() => setShowAddMenu(!showAddMenu)} style={btnPrimary}>+ Add Questions ▾</button>
                   {showAddMenu && (
                     <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', minWidth: '220px', zIndex: 100 }}>
-                      <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setShowAddMenu(false); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
+                      <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
                         <span style={{ fontSize: '18px' }}>✨</span>
                         <div><div style={{ fontWeight: '500' }}>AI Generate</div><div style={{ fontSize: '12px', color: '#888' }}>Describe a topic</div></div>
                       </button>
-                      <button onClick={() => { setAiMode('paste'); setShowAIPanel(true); setShowAddMenu(false); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
+                      <button onClick={() => { setAiMode('paste'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
                         <span style={{ fontSize: '18px' }}>📋</span>
                         <div><div style={{ fontWeight: '500' }}>Paste Questions</div><div style={{ fontSize: '12px', color: '#888' }}>AI creates alternatives</div></div>
                       </button>
-                      <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setShowAddMenu(false); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
+                      <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
                         <span style={{ fontSize: '18px' }}>📄</span>
                         <div><div style={{ fontWeight: '500' }}>From Document</div><div style={{ fontSize: '12px', color: '#888' }}>Upload PDF, Word, or text</div></div>
                       </button>
@@ -694,7 +725,7 @@ Output ONLY JSON, no other text.`;
                   </div>
                   <p style={{ margin: 0, color: '#333', fontSize: '14px', lineHeight: '1.5' }}>{lastPrompt}</p>
                 </div>
-                <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); }} style={btnSecondary}>Edit & Regenerate</button>
+                <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setGenStatus(''); }} style={btnSecondary}>Edit & Regenerate</button>
               </div>
             </div>
           )}
@@ -710,7 +741,7 @@ Output ONLY JSON, no other text.`;
                 
                 <div style={{ display: 'flex', borderBottom: '1px solid #ddd' }}>
                   {[['topic', '💡 Topic'], ['paste', '📋 Paste'], ['upload', '📄 Upload']].map(([id, label]) => (
-                    <button key={id} onClick={() => setAiMode(id)} style={{ flex: 1, padding: '12px', backgroundColor: aiMode === id ? '#fff' : '#f9f9f9', color: aiMode === id ? '#f37021' : '#666', border: 'none', borderBottom: aiMode === id ? '2px solid #f37021' : '2px solid transparent', cursor: 'pointer', fontWeight: '500', fontSize: '14px' }}>{label}</button>
+                    <button key={id} onClick={() => { setAiMode(id); setGenStatus(''); }} style={{ flex: 1, padding: '12px', backgroundColor: aiMode === id ? '#fff' : '#f9f9f9', color: aiMode === id ? '#f37021' : '#666', border: 'none', borderBottom: aiMode === id ? '2px solid #f37021' : '2px solid transparent', cursor: 'pointer', fontWeight: '500', fontSize: '14px' }}>{label}</button>
                   ))}
                 </div>
                 
@@ -860,7 +891,16 @@ Output ONLY JSON, no other text.`;
                     </div>
                   )}
                   
-                  {genStatus && <p style={{ marginTop: '12px', padding: '10px', backgroundColor: genStatus.startsWith('Error') ? '#fff5f5' : '#f5f5f5', color: genStatus.startsWith('Error') ? '#d9534f' : '#666', borderRadius: '4px', fontSize: '13px' }}>{genStatus}</p>}
+                  {genStatus && (
+                    <div style={{ marginTop: '12px' }}>
+                      {isGenerating && (
+                        <div style={{ marginBottom: '8px', backgroundColor: '#eee', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div className="progress-bar"></div>
+                        </div>
+                      )}
+                      <p style={{ padding: '10px', backgroundColor: genStatus.startsWith('Error') || genStatus.startsWith('Please') ? '#fff5f5' : '#f5f5f5', color: genStatus.startsWith('Error') || genStatus.startsWith('Please') ? '#d9534f' : '#666', borderRadius: '4px', fontSize: '13px' }}>{genStatus}</p>
+                    </div>
+                  )}
                 </div>
                 
                 <div style={{ padding: '16px 20px', borderTop: '1px solid #ddd', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: '#fafafa' }}>
@@ -869,7 +909,7 @@ Output ONLY JSON, no other text.`;
                   ) : (
                     <button onClick={() => setShowAIPanel(false)} style={btnSecondary}>Close</button>
                   )}
-                  <button onClick={generateQuestions} disabled={isGenerating || generationsUsed >= MAX_GENERATIONS || (aiMode === 'topic' && !aiSettings.topic.trim()) || (aiMode === 'paste' && !aiSettings.pastedQuestions.trim()) || (aiMode === 'upload' && !fileContent)} style={{ ...btnPrimary, opacity: isGenerating ? 0.7 : 1 }}>
+                  <button onClick={generateQuestions} disabled={isGenerating || generationsUsed >= MAX_GENERATIONS} style={{ ...btnPrimary, opacity: (isGenerating || generationsUsed >= MAX_GENERATIONS) ? 0.5 : 1 }}>
                     {isGenerating ? '⏳ Generating...' : '✨ Generate'}
                   </button>
                 </div>
@@ -905,9 +945,9 @@ Output ONLY JSON, no other text.`;
               <h2 style={{ margin: '0 0 8px', color: '#333', fontWeight: '600' }}>Ready to Build Your Quiz</h2>
               <p style={{ margin: '0 0 24px', color: '#888' }}>Choose how you'd like to add questions</p>
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); }} style={{ ...btnPrimary, padding: '14px 24px', fontSize: '15px' }}>✨ AI Generate</button>
-                <button onClick={() => { setAiMode('paste'); setShowAIPanel(true); }} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>📋 Paste Questions</button>
-                <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); }} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>📄 From Document</button>
+                <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setGenStatus(''); }} style={{ ...btnPrimary, padding: '14px 24px', fontSize: '15px' }}>✨ AI Generate</button>
+                <button onClick={() => { setAiMode('paste'); setShowAIPanel(true); setGenStatus(''); }} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>📋 Paste Questions</button>
+                <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setGenStatus(''); }} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>📄 From Document</button>
                 <button onClick={() => setQuestions([createQuestion()])} style={{ ...btnSecondary, padding: '14px 24px', fontSize: '15px' }}>✏️ Manual Entry</button>
               </div>
             </div>
