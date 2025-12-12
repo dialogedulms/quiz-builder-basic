@@ -45,8 +45,6 @@
       const [aiMode, setAiMode] = useState('topic');
       const [isGenerating, setIsGenerating] = useState(false);
       const [genStatus, setGenStatus] = useState('');
-      const [generationsUsed, setGenerationsUsed] = useState(0);
-      const MAX_GENERATIONS = 20;
       const fileInputRef = useRef(null);
       const abortControllerRef = useRef(null);
       const [isDragging, setIsDragging] = useState(false);
@@ -59,8 +57,9 @@
         qType: 'Single Choice',
         numAlts: 4,
         tags: '',
-        difficulty: 'Medium',
-        addFeedback: false
+        difficulty: 'N/A',
+        addFeedback: false,
+        useAllQuestions: true
       });
       
       const [uploadedFile, setUploadedFile] = useState(null);
@@ -216,11 +215,6 @@
           return;
         }
 
-        if (generationsUsed >= MAX_GENERATIONS) {
-          setGenStatus('Generation limit reached. Please start over or come back later.');
-          return;
-        }
-
         // Create abort controller for cancellation
         abortControllerRef.current = new AbortController();
 
@@ -270,9 +264,11 @@ Remember: Output ONLY the JSON object, nothing else.`;
             ? 'Randomly alternate between "Single Choice" (exactly 1 correct) and "Multiple Choice" (2+ correct, at least 1 incorrect)' 
             : `Use "${aiSettings.qType}" for all questions`;
           
-          const difficultyInstruction = aiSettings.difficulty === 'Randomize'
-            ? 'Vary difficulty (mix of easy, medium, hard questions)'
-            : `${aiSettings.difficulty} difficulty`;
+          const difficultyInstruction = aiSettings.difficulty === 'N/A'
+            ? ''
+            : aiSettings.difficulty === 'Randomize'
+              ? '- Vary difficulty (mix of easy, medium, hard questions)'
+              : `- ${aiSettings.difficulty} difficulty`;
 
           const feedbackInstruction = aiSettings.addFeedback
             ? `FEEDBACK (REQUIRED):
@@ -296,7 +292,7 @@ PARSING RULES:
 
 REQUIREMENTS:
 - ${typeInstruction}
-- ${difficultyInstruction}
+${difficultyInstruction}
 - ${aiSettings.points} points per question
 ${tagsInstruction}
 
@@ -329,9 +325,11 @@ Output ONLY JSON, no other text.`;
             ? 'Vary alternatives between 2-5 per question'
             : `${aiSettings.numAlts} alternatives per question`;
 
-          const difficultyInstruction = aiSettings.difficulty === 'Randomize'
-            ? 'Vary difficulty'
-            : `${aiSettings.difficulty} difficulty`;
+          const difficultyInstruction = aiSettings.difficulty === 'N/A' 
+            ? '' 
+            : aiSettings.difficulty === 'Randomize'
+              ? '- Vary difficulty levels'
+              : `- ${aiSettings.difficulty} difficulty`;
 
           const feedbackInstruction = aiSettings.addFeedback
             ? `FEEDBACK (CRITICAL - MUST INCLUDE):
@@ -388,15 +386,24 @@ Output ONLY JSON, no other text.`;
   ]
 }`;
 
-          prompt = `Based on the following document content, generate ${aiSettings.numQuestions} quiz questions that test understanding of the key concepts.
+          if (aiSettings.useAllQuestions) {
+            // Mode 1: Parse and process ALL questions from the file
+            prompt = `You are a quiz question processor. The document below contains quiz questions. Extract and process ALL questions found in the document.
 
 DOCUMENT CONTENT:
 ${documentContent}
 
+INSTRUCTIONS:
+1. Find ALL questions in the document
+2. If alternatives/answers are provided, use them exactly as written
+3. If a correct answer is marked (with *, "correct", ✓, or similar), preserve that as correct
+4. If no alternatives are provided for a question, generate ${aiSettings.numAlts} alternatives
+5. If no correct answer is marked, determine the most appropriate correct answer
+
 REQUIREMENTS:
 - ${typeInstruction}
 - ${altsInstruction}
-- ${difficultyInstruction}
+${difficultyInstruction}
 - ${aiSettings.points} points per question
 ${tagsInstruction}
 
@@ -406,6 +413,28 @@ OUTPUT FORMAT - Return ONLY valid JSON:
 ${jsonExample}
 
 Output ONLY JSON, no other text.`;
+          } else {
+            // Mode 2: Generate N questions based on content
+            prompt = `Based on the following document content, generate ${aiSettings.numQuestions} quiz questions that test understanding of the key concepts.
+
+DOCUMENT CONTENT:
+${documentContent}
+
+REQUIREMENTS:
+- Generate exactly ${aiSettings.numQuestions} questions
+- ${typeInstruction}
+- ${altsInstruction}
+${difficultyInstruction}
+- ${aiSettings.points} points per question
+${tagsInstruction}
+
+${feedbackInstruction}
+
+OUTPUT FORMAT - Return ONLY valid JSON:
+${jsonExample}
+
+Output ONLY JSON, no other text.`;
+          }
         }
 
         try {
@@ -474,7 +503,6 @@ Output ONLY JSON, no other text.`;
           
           setQuestions([...questions, ...newQs]);
           setLastPrompt(aiMode === 'topic' ? aiSettings.topic : aiMode === 'paste' ? aiSettings.pastedQuestions : 'Generated from document');
-          setGenerationsUsed(prev => prev + 1);
           setShowAIPanel(false);
           setGenStatus('');
           setUploadedFile(null);
@@ -635,8 +663,9 @@ Output ONLY JSON, no other text.`;
           qType: 'Single Choice',
           numAlts: 4,
           tags: '',
-          difficulty: 'Medium',
-          addFeedback: false
+          difficulty: 'N/A',
+          addFeedback: false,
+          useAllQuestions: true
         });
       };
 
@@ -668,19 +697,14 @@ Output ONLY JSON, no other text.`;
                 <div style={{ width: '8px', height: '32px', backgroundColor: '#f37021', borderRadius: '2px' }}></div>
                 <div>
                   <h1 style={{ fontSize: '22px', fontWeight: '600', margin: 0, color: '#333' }}>Quiz Builder</h1>
-                  <p style={{ margin: '2px 0 0', color: '#888', fontSize: '13px' }}>Click to start over</p>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                <span style={{ color: '#888', fontSize: '13px', marginRight: '8px' }}>
-                  {MAX_GENERATIONS - generationsUsed} generations left
-                </span>
                 {questions.length > 0 && (
                   <>
                     <span style={{ color: '#666', fontSize: '14px', marginRight: '8px' }}>{questions.length} question(s)</span>
-                    <button onClick={validateAll} style={btnSecondary}>Validate</button>
+                    <button onClick={clearAll} style={btnSecondary}>Start Over</button>
                     <button onClick={exportCsv} style={{ ...btnPrimary, backgroundColor: '#5cb85c' }}>Export CSV</button>
-                    <button onClick={clearAll} style={btnSecondary}>Clear All</button>
                   </>
                 )}
                 <div style={{ position: 'relative' }}>
@@ -823,6 +847,7 @@ Output ONLY JSON, no other text.`;
                         <div>
                           <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Difficulty</label>
                           <select value={aiSettings.difficulty} onChange={e => setAiSettings({ ...aiSettings, difficulty: e.target.value })} style={inputStyle}>
+                            <option>N/A</option>
                             <option>Easy</option>
                             <option>Medium</option>
                             <option>Hard</option>
@@ -844,13 +869,21 @@ Output ONLY JSON, no other text.`;
                   {/* Upload Settings */}
                   {aiMode === 'upload' && (
                     <div style={{ marginTop: '20px' }}>
+                      <label style={checkboxStyle}>
+                        <input type="checkbox" checked={aiSettings.useAllQuestions} onChange={e => setAiSettings({ ...aiSettings, useAllQuestions: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
+                        Use all questions from file
+                      </label>
+                      <p style={{ margin: '4px 0 16px 26px', color: '#888', fontSize: '12px' }}>
+                        {aiSettings.useAllQuestions ? 'AI will process all questions found in your document' : 'AI will generate new questions based on the content'}
+                      </p>
+                      
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Questions</label>
-                          <select value={aiSettings.numQuestions} onChange={e => setAiSettings({ ...aiSettings, numQuestions: +e.target.value })} style={inputStyle}>
-                            {[3,5,10,15,20].map(n => <option key={n} value={n}>{n}</option>)}
-                          </select>
-                        </div>
+                        {!aiSettings.useAllQuestions && (
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Number of Questions</label>
+                            <input type="number" min="1" max="50" value={aiSettings.numQuestions} onChange={e => setAiSettings({ ...aiSettings, numQuestions: Math.max(1, +e.target.value) })} style={inputStyle} />
+                          </div>
+                        )}
                         <div>
                           <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Points Each</label>
                           <input type="number" value={aiSettings.points} onChange={e => setAiSettings({ ...aiSettings, points: +e.target.value })} style={inputStyle} />
@@ -873,6 +906,7 @@ Output ONLY JSON, no other text.`;
                         <div>
                           <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Difficulty</label>
                           <select value={aiSettings.difficulty} onChange={e => setAiSettings({ ...aiSettings, difficulty: e.target.value })} style={inputStyle}>
+                            <option>N/A</option>
                             <option>Easy</option>
                             <option>Medium</option>
                             <option>Hard</option>
@@ -909,7 +943,7 @@ Output ONLY JSON, no other text.`;
                   ) : (
                     <button onClick={() => setShowAIPanel(false)} style={btnSecondary}>Close</button>
                   )}
-                  <button onClick={generateQuestions} disabled={isGenerating || generationsUsed >= MAX_GENERATIONS} style={{ ...btnPrimary, opacity: (isGenerating || generationsUsed >= MAX_GENERATIONS) ? 0.5 : 1 }}>
+                  <button onClick={generateQuestions} disabled={isGenerating} style={{ ...btnPrimary, opacity: isGenerating ? 0.5 : 1 }}>
                     {isGenerating ? '⏳ Generating...' : '✨ Generate'}
                   </button>
                 </div>
