@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,6 +9,7 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -60,7 +60,10 @@
         tags: '',
         difficulty: 'N/A',
         addFeedback: false,
-        useAllQuestions: true
+        feedbackLevel: 'question',
+        feedbackSource: 'ai',
+        useAllQuestions: true,
+        randomizeAlts: false
       });
       
       const [uploadedFile, setUploadedFile] = useState(null);
@@ -125,6 +128,40 @@
         }
       };
 
+      // Extract text from PPTX
+      const extractPptxText = async (arrayBuffer) => {
+        try {
+          const zip = await JSZip.loadAsync(arrayBuffer);
+          let fullText = '';
+          
+          // Get all slide files
+          const slideFiles = Object.keys(zip.files)
+            .filter(name => name.match(/ppt\/slides\/slide\d+\.xml$/))
+            .sort((a, b) => {
+              const numA = parseInt(a.match(/slide(\d+)/)[1]);
+              const numB = parseInt(b.match(/slide(\d+)/)[1]);
+              return numA - numB;
+            });
+          
+          for (const slideFile of slideFiles) {
+            const content = await zip.files[slideFile].async('string');
+            // Extract text from XML - look for <a:t> tags which contain text
+            const textMatches = content.match(/<a:t>([^<]*)<\/a:t>/g) || [];
+            const slideText = textMatches
+              .map(match => match.replace(/<a:t>|<\/a:t>/g, ''))
+              .join(' ');
+            if (slideText.trim()) {
+              fullText += slideText + '\n\n';
+            }
+          }
+          
+          return fullText || '[No text content found in presentation]';
+        } catch (err) {
+          console.error('PPTX extraction error:', err);
+          throw new Error('Could not read PowerPoint file. Please try a different format.');
+        }
+      };
+
       const handleFile = async (file) => {
         if (!file) return;
         setUploadedFile(file);
@@ -142,17 +179,26 @@
             const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
             setFileContent({ type: 'text/plain', text: result.value });
             setGenStatus('');
+          } else if (file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' || file.name.endsWith('.pptx')) {
+            // PowerPoint document
+            const arrayBuffer = await file.arrayBuffer();
+            const text = await extractPptxText(arrayBuffer);
+            setFileContent({ type: 'text/plain', text: text });
+            setGenStatus('');
           } else if (file.type === 'application/msword' || file.name.endsWith('.doc')) {
             setGenStatus('Note: .doc files are not supported. Please convert to .docx');
+            setFileContent(null);
+          } else if (file.type === 'application/vnd.ms-powerpoint' || file.name.endsWith('.ppt')) {
+            setGenStatus('Note: .ppt files are not supported. Please convert to .pptx');
             setFileContent(null);
           } else if (file.type.startsWith('text/') || file.name.endsWith('.txt')) {
             const text = await file.text();
             setFileContent({ type: 'text/plain', text: text });
             setGenStatus('');
           } else if (file.type.startsWith('image/')) {
-            // For images, we'll just note that it's an image - Groq can't process images
+            // For images, we'll just note that it's an image - Gemini can't process images via this API
             setFileContent({ type: 'image', text: `[Image file: ${file.name}]` });
-            setGenStatus('Note: Image files cannot be processed directly. Please use text, PDF, or Word files.');
+            setGenStatus('Note: Image files cannot be processed directly. Please use text, PDF, Word, or PowerPoint files.');
           } else {
             // Try to read as text
             const text = await file.text();
@@ -271,11 +317,49 @@ Remember: Output ONLY the JSON object, nothing else.`;
               ? '- Vary difficulty (mix of easy, medium, hard questions)'
               : `- ${aiSettings.difficulty} difficulty`;
 
-          const feedbackInstruction = aiSettings.addFeedback
-            ? `FEEDBACK (REQUIRED):
-- For "Single Choice": Include "feedback" for EACH alternative with positive, encouraging tone
-- For "Multiple Choice": Include "correctFeedback" and "incorrectFeedback" at question level`
-            : 'NO feedback - do not include any feedback fields';
+          let feedbackInstruction = 'NO feedback - do not include any feedback fields';
+          if (aiSettings.addFeedback) {
+            if (aiSettings.feedbackSource === 'generic') {
+              if (aiSettings.feedbackLevel === 'question') {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- Include "correctFeedback": "Correct! Great job." at question level
+- Include "incorrectFeedback": "Incorrect. Please review the material." at question level
+- Do NOT include feedback on individual alternatives`;
+              } else {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- For EACH alternative, include "feedback" field
+- For correct alternatives: "Correct! Great job."
+- For incorrect alternatives: "Incorrect."`;
+              }
+            } else if (aiSettings.feedbackSource === 'inherited') {
+              if (aiSettings.feedbackLevel === 'question') {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- Look for "Rationale", "Explanation", or "Feedback" in the source content
+- If found, use it as "correctFeedback" at question level
+- Set "incorrectFeedback": "Incorrect. Please review the material."
+- If no rationale found, leave feedback fields as empty strings for manual entry`;
+              } else {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- Look for "Rationale", "Explanation", or "Feedback" in the source content
+- If found for correct answer, use it as "feedback" on the correct alternative(s)
+- For incorrect alternatives: set "feedback": "Incorrect."
+- If no rationale found, leave feedback fields as empty strings for manual entry`;
+              }
+            } else {
+              // AI generated
+              if (aiSettings.feedbackLevel === 'question') {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- Include "correctFeedback" at question level with positive, educational explanation
+- Include "incorrectFeedback" at question level with helpful guidance
+- Do NOT include feedback on individual alternatives`;
+              } else {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- For EACH alternative, include "feedback" field with positive, encouraging tone
+- Correct alternatives: Explain why it's correct
+- Incorrect alternatives: Gently explain why it's wrong and guide toward correct answer`;
+              }
+            }
+          }
 
           const tagsInstruction = aiSettings.tags.trim() 
             ? `- Tag each question with: "${aiSettings.tags}"`
@@ -286,7 +370,7 @@ Remember: Output ONLY the JSON object, nothing else.`;
 ${aiSettings.pastedQuestions}
 
 PARSING RULES:
-1. If alternatives are provided (A, B, C, D options), use them exactly
+1. If alternatives are provided (A, B, C, D options), use them exactly as given - preserve the order
 2. If a correct answer is marked (with *, "correct", ✓), preserve that as correct
 3. If no alternatives provided, generate ${aiSettings.numAlts} alternatives
 4. If no correct answer marked, determine the correct answer
@@ -308,9 +392,11 @@ OUTPUT FORMAT - Return ONLY valid JSON:
       "questionText": "...",
       "points": ${aiSettings.points},
       "tags": "${aiSettings.tags || ''}",
+      "correctFeedback": "...",
+      "incorrectFeedback": "...",
       "alternatives": [
-        {"text": "...", "correct": true},
-        {"text": "...", "correct": false}
+        {"text": "...", "correct": true, "feedback": "..."},
+        {"text": "...", "correct": false, "feedback": "..."}
       ]
     }
   ]
@@ -336,11 +422,49 @@ Output ONLY JSON, no other text.`;
               ? '- Vary difficulty levels'
               : `- ${aiSettings.difficulty} difficulty`;
 
-          const feedbackInstruction = aiSettings.addFeedback
-            ? `FEEDBACK (CRITICAL - MUST INCLUDE):
-- For "Single Choice" questions: Include "feedback" field for EACH alternative with positive, encouraging tone explaining why correct/incorrect
-- For "Multiple Choice" questions: Include "correctFeedback" and "incorrectFeedback" at question level (NOT per alternative)`
-            : 'NO feedback - do not include any feedback fields';
+          let feedbackInstruction = 'NO feedback - do not include any feedback fields';
+          if (aiSettings.addFeedback) {
+            if (aiSettings.feedbackSource === 'generic') {
+              if (aiSettings.feedbackLevel === 'question') {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- Include "correctFeedback": "Correct! Great job." at question level
+- Include "incorrectFeedback": "Incorrect. Please review the material." at question level
+- Do NOT include feedback on individual alternatives`;
+              } else {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- For EACH alternative, include "feedback" field
+- For correct alternatives: "Correct! Great job."
+- For incorrect alternatives: "Incorrect."`;
+              }
+            } else if (aiSettings.feedbackSource === 'inherited') {
+              if (aiSettings.feedbackLevel === 'question') {
+                feedbackInstruction = `FEEDBACK (CRITICAL - Extract from document):
+- Look for "Rationale", "Rationale for correct answer", "Explanation", or "Feedback" near each question
+- If found, use it as "correctFeedback" at question level (this is very important - extract the actual rationale text)
+- Set "incorrectFeedback": "Incorrect. Please review the material."
+- If no rationale found in document, leave feedback fields as empty strings "" for manual entry later`;
+              } else {
+                feedbackInstruction = `FEEDBACK (CRITICAL - Extract from document):
+- Look for "Rationale", "Rationale for correct answer", "Explanation", or "Feedback" near each question
+- If found, use it as "feedback" on the correct alternative(s)
+- For incorrect alternatives: set "feedback": "Incorrect."
+- If no rationale found in document, leave feedback fields as empty strings "" for manual entry later`;
+              }
+            } else {
+              // AI generated
+              if (aiSettings.feedbackLevel === 'question') {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- Include "correctFeedback" at question level with positive, educational explanation
+- Include "incorrectFeedback" at question level with helpful guidance
+- Do NOT include feedback on individual alternatives`;
+              } else {
+                feedbackInstruction = `FEEDBACK (REQUIRED):
+- For EACH alternative, include "feedback" field with positive, encouraging tone
+- Correct alternatives: Explain why it's correct
+- Incorrect alternatives: Gently explain why it's wrong and guide toward correct answer`;
+              }
+            }
+          }
 
           const tagsInstruction = aiSettings.tags.trim() 
             ? `- Tag each question with: "${aiSettings.tags}"`
@@ -349,36 +473,9 @@ Output ONLY JSON, no other text.`;
           const documentContent = fileContent?.text || '[No content available]';
 
           // Build JSON example based on feedback setting
-          const jsonExample = aiSettings.addFeedback 
-            ? `{
-  "questions": [
-    {
-      "questionType": "Single Choice",
-      "scoring": "Simple",
-      "questionText": "...",
-      "points": ${aiSettings.points},
-      "tags": "${aiSettings.tags || ''}",
-      "alternatives": [
-        {"text": "...", "correct": true, "feedback": "Correct! Great job. This is right because..."},
-        {"text": "...", "correct": false, "feedback": "Not quite. The correct answer is... because..."}
-      ]
-    },
-    {
-      "questionType": "Multiple Choice",
-      "scoring": "Simple",
-      "questionText": "...",
-      "points": ${aiSettings.points},
-      "tags": "${aiSettings.tags || ''}",
-      "correctFeedback": "Excellent! You identified all the correct answers.",
-      "incorrectFeedback": "Review this topic. Remember that...",
-      "alternatives": [
-        {"text": "...", "correct": true},
-        {"text": "...", "correct": false}
-      ]
-    }
-  ]
-}`
-            : `{
+          let jsonExample;
+          if (!aiSettings.addFeedback) {
+            jsonExample = `{
   "questions": [
     {
       "questionType": "Single Choice",
@@ -387,6 +484,40 @@ Output ONLY JSON, no other text.`;
       "points": ${aiSettings.points},
       "tags": "${aiSettings.tags || ''}",
       "alternatives": [{"text": "...", "correct": true}, {"text": "...", "correct": false}]
+    }
+  ]
+}`;
+          } else if (aiSettings.feedbackLevel === 'question') {
+            jsonExample = `{
+  "questions": [
+    {
+      "questionType": "Single Choice",
+      "scoring": "Simple",
+      "questionText": "...",
+      "points": ${aiSettings.points},
+      "tags": "${aiSettings.tags || ''}",
+      "correctFeedback": "Correct! [explanation from rationale if inherited, or generated]",
+      "incorrectFeedback": "Incorrect. Please review the material.",
+      "alternatives": [
+        {"text": "...", "correct": true},
+        {"text": "...", "correct": false}
+      ]
+    }
+  ]
+}`;
+          } else {
+            jsonExample = `{
+  "questions": [
+    {
+      "questionType": "Single Choice",
+      "scoring": "Simple",
+      "questionText": "...",
+      "points": ${aiSettings.points},
+      "tags": "${aiSettings.tags || ''}",
+      "alternatives": [
+        {"text": "...", "correct": true, "feedback": "[explanation from rationale if inherited, or generated]"},
+        {"text": "...", "correct": false, "feedback": "Incorrect."}
+      ]
     }
   ]
 }`;
@@ -400,10 +531,11 @@ ${documentContent}
 
 INSTRUCTIONS:
 1. Find ALL questions in the document
-2. If alternatives/answers are provided, use them exactly as written
+2. If alternatives/answers are provided, use them EXACTLY as written and IN THE SAME ORDER as in the document
 3. If a correct answer is marked (with *, "correct", ✓, or similar), preserve that as correct
 4. If no alternatives are provided for a question, generate ${aiSettings.numAlts} alternatives
 5. If no correct answer is marked, determine the most appropriate correct answer
+6. PRESERVE the original order of alternatives - do NOT shuffle or reorder them
 
 REQUIREMENTS:
 - ${typeInstruction}
@@ -483,8 +615,9 @@ Output ONLY JSON, no other text.`;
           
           const newQs = (parsed.questions || []).map((q, i) => {
             const qType = q.questionType || 'Single Choice';
-            const shuffledAlts = shuffleArray(q.alternatives || []);
-            const numAlts = Math.min(shuffledAlts.length || 4, 5);
+            const alts = q.alternatives || [];
+            const processedAlts = aiSettings.randomizeAlts ? shuffleArray(alts) : alts;
+            const numAlts = Math.min(processedAlts.length || 4, 5);
             
             return {
               ...createQuestion(),
@@ -497,7 +630,7 @@ Output ONLY JSON, no other text.`;
               numAlts: numAlts,
               correctFb: q.correctFeedback || '',
               incorrectFb: q.incorrectFeedback || '',
-              alternatives: [...shuffledAlts.slice(0, 5).map(a => ({
+              alternatives: [...processedAlts.slice(0, 5).map(a => ({
                 text: a.text || '', 
                 correct: !!a.correct, 
                 pct: '', 
@@ -670,7 +803,10 @@ Output ONLY JSON, no other text.`;
           tags: '',
           difficulty: 'N/A',
           addFeedback: false,
-          useAllQuestions: true
+          feedbackLevel: 'question',
+          feedbackSource: 'ai',
+          useAllQuestions: true,
+          randomizeAlts: false
         });
       };
 
@@ -726,7 +862,7 @@ Output ONLY JSON, no other text.`;
                       </button>
                       <button onClick={() => { setAiMode('upload'); setShowAIPanel(true); setShowAddMenu(false); setGenStatus(''); setAiSettings(s => ({ ...s, qType: s.useAllQuestions ? 'As in file' : 'Single Choice', numAlts: s.useAllQuestions ? 'As in file' : 4 })); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}>
                         <span style={{ fontSize: '18px' }}>📄</span>
-                        <div><div style={{ fontWeight: '500' }}>From Document</div><div style={{ fontSize: '12px', color: '#888' }}>Upload PDF, Word, or text</div></div>
+                        <div><div style={{ fontWeight: '500' }}>From Document</div><div style={{ fontSize: '12px', color: '#888' }}>PDF, Word, PowerPoint, or text</div></div>
                       </button>
                       <button onClick={() => { setQuestions([...questions, createQuestion()]); setShowAddMenu(false); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '14px', color: '#333' }}>
                         <span style={{ fontSize: '18px' }}>✏️</span>
@@ -812,12 +948,12 @@ Output ONLY JSON, no other text.`;
                           transition: 'all 0.2s'
                         }}
                       >
-                        <input ref={fileInputRef} type="file" onChange={handleFileInput} accept=".pdf,.txt,.doc,.docx" style={{ display: 'none' }} />
+                        <input ref={fileInputRef} type="file" onChange={handleFileInput} accept=".pdf,.txt,.doc,.docx,.ppt,.pptx" style={{ display: 'none' }} />
                         {uploadedFile ? <p style={{ color: '#5cb85c', margin: 0, fontWeight: '500' }}>📄 {uploadedFile.name}</p> : (
                           <div>
                             <div style={{ fontSize: '32px', marginBottom: '8px' }}>📁</div>
                             <p style={{ color: '#888', margin: 0 }}>Drag & drop or click to upload</p>
-                            <p style={{ color: '#aaa', margin: '8px 0 0', fontSize: '12px' }}>PDF, Word (.docx), or Text files</p>
+                            <p style={{ color: '#aaa', margin: '8px 0 0', fontSize: '12px' }}>PDF, Word, PowerPoint, or Text files</p>
                           </div>
                         )}
                       </div>
@@ -864,10 +1000,49 @@ Output ONLY JSON, no other text.`;
                           <input value={aiSettings.tags} onChange={e => setAiSettings({ ...aiSettings, tags: e.target.value })} placeholder="Leave blank for no tags" style={inputStyle} />
                         </div>
                       </div>
+                      
+                      <label style={checkboxStyle}>
+                        <input type="checkbox" checked={aiSettings.randomizeAlts} onChange={e => setAiSettings({ ...aiSettings, randomizeAlts: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
+                        Randomize alternatives
+                      </label>
+                      
                       <label style={checkboxStyle}>
                         <input type="checkbox" checked={aiSettings.addFeedback} onChange={e => setAiSettings({ ...aiSettings, addFeedback: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
-                        Add encouraging feedback
+                        Add Feedback
                       </label>
+                      
+                      {aiSettings.addFeedback && (
+                        <div style={{ marginLeft: '26px', marginTop: '8px', padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+                          {(aiSettings.qType === 'Single Choice' || aiSettings.qType === 'Randomize') && (
+                            <div style={{ marginBottom: '12px' }}>
+                              <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Level</label>
+                              <div style={{ display: 'flex', gap: '16px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                                  <input type="radio" name="feedbackLevel" checked={aiSettings.feedbackLevel === 'question'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'question' })} style={{ accentColor: '#f37021' }} />
+                                  Question Level
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                                  <input type="radio" name="feedbackLevel" checked={aiSettings.feedbackLevel === 'alternative'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'alternative' })} style={{ accentColor: '#f37021' }} />
+                                  Alternative Level
+                                </label>
+                              </div>
+                            </div>
+                          )}
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Source</label>
+                            <select value={aiSettings.feedbackSource} onChange={e => setAiSettings({ ...aiSettings, feedbackSource: e.target.value })} style={inputStyle}>
+                              <option value="ai">AI Generated</option>
+                              <option value="generic">Generic</option>
+                              <option value="inherited">Inherited (from source)</option>
+                            </select>
+                            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '11px' }}>
+                              {aiSettings.feedbackSource === 'ai' && 'AI will create encouraging, educational feedback'}
+                              {aiSettings.feedbackSource === 'generic' && 'Simple feedback: "Correct!" / "Incorrect"'}
+                              {aiSettings.feedbackSource === 'inherited' && 'Use rationale from your content if available'}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -925,10 +1100,49 @@ Output ONLY JSON, no other text.`;
                           <input value={aiSettings.tags} onChange={e => setAiSettings({ ...aiSettings, tags: e.target.value })} placeholder="Leave blank for no tags" style={inputStyle} />
                         </div>
                       </div>
+                      
+                      <label style={checkboxStyle}>
+                        <input type="checkbox" checked={aiSettings.randomizeAlts} onChange={e => setAiSettings({ ...aiSettings, randomizeAlts: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
+                        Randomize alternatives
+                      </label>
+                      
                       <label style={checkboxStyle}>
                         <input type="checkbox" checked={aiSettings.addFeedback} onChange={e => setAiSettings({ ...aiSettings, addFeedback: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: '#f37021' }} />
-                        Add encouraging feedback
+                        Add Feedback
                       </label>
+                      
+                      {aiSettings.addFeedback && (
+                        <div style={{ marginLeft: '26px', marginTop: '8px', padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+                          {(aiSettings.qType === 'Single Choice' || aiSettings.qType === 'Randomize' || aiSettings.qType === 'As in file') && (
+                            <div style={{ marginBottom: '12px' }}>
+                              <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Level</label>
+                              <div style={{ display: 'flex', gap: '16px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                                  <input type="radio" name="uploadFeedbackLevel" checked={aiSettings.feedbackLevel === 'question'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'question' })} style={{ accentColor: '#f37021' }} />
+                                  Question Level
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                                  <input type="radio" name="uploadFeedbackLevel" checked={aiSettings.feedbackLevel === 'alternative'} onChange={() => setAiSettings({ ...aiSettings, feedbackLevel: 'alternative' })} style={{ accentColor: '#f37021' }} />
+                                  Alternative Level
+                                </label>
+                              </div>
+                            </div>
+                          )}
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Feedback Source</label>
+                            <select value={aiSettings.feedbackSource} onChange={e => setAiSettings({ ...aiSettings, feedbackSource: e.target.value })} style={inputStyle}>
+                              <option value="ai">AI Generated</option>
+                              <option value="generic">Generic</option>
+                              <option value="inherited">Inherited (from source)</option>
+                            </select>
+                            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '11px' }}>
+                              {aiSettings.feedbackSource === 'ai' && 'AI will create encouraging, educational feedback'}
+                              {aiSettings.feedbackSource === 'generic' && 'Simple feedback: "Correct!" / "Incorrect"'}
+                              {aiSettings.feedbackSource === 'inherited' && 'Use rationale from your document if available'}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                   
