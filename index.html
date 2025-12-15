@@ -1,6 +1,5 @@
-<!DOCTYPE html>
-<!-- Hi -->
 
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -172,13 +171,20 @@
           'Include educational "correctFeedback" and "incorrectFeedback" at question level');
 
         if (aiMode === 'topic') {
+          // For topic mode, check if user mentions feedback in their prompt
+          const topicLower = aiSettings.topic.toLowerCase();
+          const mentionsFeedback = topicLower.includes('feedback');
+          const topicFeedbackInstr = mentionsFeedback ? 
+            'Follow the feedback instructions specified in the request' : 
+            'Do NOT include feedback - leave correctFeedback, incorrectFeedback, and alternative feedback as empty strings ""';
+          
           prompt = `Generate quiz questions based on: "${aiSettings.topic}"
 
 RULES:
 - Follow all specifications in the request exactly
 - Single Choice = exactly 1 correct answer, Multiple Choice = 2 or more correct
 - Only include tags if explicitly mentioned in the request
-- ${feedbackInstr}
+- ${topicFeedbackInstr}
 
 RESPOND WITH ONLY VALID JSON (no markdown, no explanation):
 ${jsonExample}`;
@@ -256,10 +262,11 @@ ${jsonExample}`;
             const alts = q.alternatives || [];
             const processedAlts = aiSettings.randomizeAlts ? shuffleArray(alts) : alts;
             
-            // For inherited/generic feedback, only use question-level feedback (ignore alternative feedback)
-            const useQuestionLevelOnly = aiSettings.feedbackSource === 'inherited' || aiSettings.feedbackSource === 'generic';
+            // For inherited/generic feedback (paste/upload modes), only use question-level feedback
+            // For topic mode, respect whatever the AI returned based on user's prompt
+            const useQuestionLevelOnly = aiMode !== 'topic' && (aiSettings.feedbackSource === 'inherited' || aiSettings.feedbackSource === 'generic');
             const hasQFb = q.correctFeedback || q.incorrectFeedback;
-            const hasAltFb = !useQuestionLevelOnly && alts.some(a => a.feedback);
+            const hasAltFb = alts.some(a => a.feedback);
             
             return {
               ...createQuestion(), id: Date.now() + i, questionType: q.questionType || 'Single Choice',
@@ -269,7 +276,7 @@ ${jsonExample}`;
               showFeedback: hasQFb || hasAltFb,
               alternatives: [...processedAlts.slice(0, 5).map(a => ({
                 text: a.text || '', correct: !!a.correct, pct: '', 
-                feedback: useQuestionLevelOnly ? '' : (a.feedback || '')  // Clear alt feedback for inherited/generic
+                feedback: useQuestionLevelOnly ? '' : (a.feedback || '')  // Clear alt feedback for inherited/generic in paste/upload
               })), ...Array(5).fill(null)].slice(0, 5).map(a => a || { text: '', correct: false, pct: '', feedback: '' })
             };
           });
