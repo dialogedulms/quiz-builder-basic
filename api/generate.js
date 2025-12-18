@@ -43,8 +43,8 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'GEMINI_API_KEY not configured' });
     }
 
-    // Use gemini-3-pro-preview (shown in user's AI Studio)
-    const model = 'gemini-3-pro-preview';
+    // Use gemini-2.0-flash for reliable JSON generation
+    const model = 'gemini-2.0-flash';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     const response = await fetch(url, {
@@ -79,12 +79,18 @@ export default async function handler(req, res) {
 
     // Extract text from response
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const finishReason = data.candidates?.[0]?.finishReason || '';
+    
+    // Log if response was truncated
+    if (finishReason === 'MAX_TOKENS') {
+      console.log('Warning: Response was truncated due to token limit');
+    }
 
     if (!text) {
       return res.status(400).json({ error: 'No response generated' });
     }
 
-    return res.status(200).json({ text });
+    return res.status(200).json({ text, finishReason });
 
   } catch (error) {
     console.error('Server error:', error);
