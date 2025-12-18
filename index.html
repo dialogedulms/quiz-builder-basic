@@ -40,7 +40,7 @@
       
       const [aiSettings, setAiSettings] = useState({
         topic: '', pastedQuestions: '', numQuestions: 5, points: 10, qType: 'Single Choice',
-        numAlts: 4, tags: '', difficulty: 'N/A', addFeedback: false, feedbackLevel: 'question',
+        numAlts: 'inherited', tags: '', difficulty: 'N/A', addFeedback: false, feedbackLevel: 'question',
         feedbackSource: 'ai', useAllQuestions: true, randomizeAlts: false
       });
       
@@ -61,7 +61,7 @@
       const createQuestion = () => ({
         id: Date.now(), questionType: 'Single Choice', scoring: 'Simple', questionText: '',
         points: '10', tags: '', numAlts: 4, correctFb: '', incorrectFb: '', showFeedback: false,
-        alternatives: Array(5).fill(null).map(() => ({ text: '', correct: false, pct: '', feedback: '' }))
+        alternatives: Array(10).fill(null).map(() => ({ text: '', correct: false, pct: '', feedback: '' }))
       });
 
       const updateQ = (idx, field, value) => {
@@ -197,12 +197,16 @@ RULES:
 RESPOND WITH ONLY VALID JSON (no markdown, no explanation):
 ${jsonExample}`;
         } else if (aiMode === 'paste') {
+          const altInstr = aiSettings.numAlts === 'inherited' ? 
+            'Keep ALL alternatives exactly as provided (do not add or remove any)' : 
+            `Use exactly ${aiSettings.numAlts} alternatives per question`;
           prompt = `Convert these questions to JSON format:
 
 ${aiSettings.pastedQuestions}
 
 RULES:
 - Keep alternatives in EXACT order as given
+- ${altInstr}
 - Question type: ${aiSettings.qType === 'Randomize' ? 'Vary between Single Choice and Multiple Choice' : aiSettings.qType}
 - Points: ${aiSettings.points} per question
 - Tags: ${aiSettings.tags || 'leave empty ""'}
@@ -282,16 +286,21 @@ ${jsonExample}`;
               (aiMode !== 'topic' && (aiSettings.feedbackSource === 'inherited' || aiSettings.feedbackSource === 'generic'));
             const useAltFeedback = !forceQuestionLevel && !hasQFb && hasAltFb;
             
+            // Determine max alternatives: inherited = use actual count, otherwise use setting (max 10)
+            const maxAlts = 10;
+            const actualAltCount = processedAlts.length;
+            const numAltsToUse = aiSettings.numAlts === 'inherited' ? Math.min(actualAltCount, maxAlts) : Math.min(aiSettings.numAlts || actualAltCount, maxAlts);
+            
             return {
               ...createQuestion(), id: Date.now() + i, questionType: q.questionType || 'Single Choice',
               scoring: q.scoring || 'Simple', questionText: q.questionText || '', points: String(q.points || 10),
-              tags: q.tags || '', numAlts: Math.min(processedAlts.length || 4, 5),
+              tags: q.tags || '', numAlts: numAltsToUse,
               correctFb: q.correctFeedback || '', incorrectFb: q.incorrectFeedback || '', 
               showFeedback: hasQFb || hasAltFb,
-              alternatives: [...processedAlts.slice(0, 5).map(a => ({
+              alternatives: [...processedAlts.slice(0, maxAlts).map(a => ({
                 text: a.text || '', correct: !!a.correct, pct: '', 
                 feedback: useAltFeedback ? (a.feedback || '') : ''  // Only keep alt feedback if using alt-level
-              })), ...Array(5).fill(null)].slice(0, 5).map(a => a || { text: '', correct: false, pct: '', feedback: '' })
+              })), ...Array(maxAlts).fill(null)].slice(0, maxAlts).map(a => a || { text: '', correct: false, pct: '', feedback: '' })
             };
           });
           
@@ -452,7 +461,7 @@ ${jsonExample}`;
                         <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
                           <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Points</label><input type="number" value={aiSettings.points} onChange={e => setAiSettings({ ...aiSettings, points: +e.target.value })} style={inputStyle} /></div>
                           <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label><select value={aiSettings.qType} onChange={e => setAiSettings({ ...aiSettings, qType: e.target.value })} style={inputStyle}><option>Single Choice</option><option>Multiple Choice</option><option>Randomize</option></select></div>
-                          <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label><select value={aiSettings.numAlts} onChange={e => setAiSettings({ ...aiSettings, numAlts: +e.target.value })} style={inputStyle}>{[2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}</select></div>
+                          <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label><select value={aiSettings.numAlts} onChange={e => setAiSettings({ ...aiSettings, numAlts: e.target.value === 'inherited' ? 'inherited' : +e.target.value })} style={inputStyle}><option value="inherited">Inherited</option>{[2,3,4,5,6,7,8,9,10].map(n => <option key={n} value={n}>{n}</option>)}</select></div>
                           <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Difficulty</label><select value={aiSettings.difficulty} onChange={e => setAiSettings({ ...aiSettings, difficulty: e.target.value })} style={inputStyle}><option>N/A</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
                           <div style={{ gridColumn: 'span 2' }}><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Tags</label><input value={aiSettings.tags} onChange={e => setAiSettings({ ...aiSettings, tags: e.target.value })} placeholder="Leave blank for no tags" style={inputStyle} /></div>
                         </div>
@@ -584,7 +593,7 @@ ${jsonExample}`;
                   <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label><select value={q.questionType} onChange={e => updateQ(qi, 'questionType', e.target.value)} style={inputStyle}><option>Single Choice</option><option>Multiple Choice</option></select></div>
                   {q.questionType === 'Multiple Choice' && <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Scoring</label><select value={q.scoring} onChange={e => updateQ(qi, 'scoring', e.target.value)} style={inputStyle}><option>Simple</option><option>Weighted</option></select></div>}
                   <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Points</label><input type="number" value={q.points} onChange={e => updateQ(qi, 'points', e.target.value)} style={inputStyle} /></div>
-                  <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label><select value={q.numAlts} onChange={e => updateQ(qi, 'numAlts', +e.target.value)} style={inputStyle}>{[2,3,4,5].map(n => <option key={n}>{n}</option>)}</select></div>
+                  <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Alternatives</label><select value={q.numAlts} onChange={e => updateQ(qi, 'numAlts', +e.target.value)} style={inputStyle}>{[2,3,4,5,6,7,8,9,10].map(n => <option key={n}>{n}</option>)}</select></div>
                   <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Tags</label><input value={q.tags} onChange={e => updateQ(qi, 'tags', e.target.value)} style={inputStyle} /></div>
                 </div>
                 <div style={{ marginBottom: '16px' }}><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Question</label><textarea value={q.questionText} onChange={e => updateQ(qi, 'questionText', e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical' }} /></div>
