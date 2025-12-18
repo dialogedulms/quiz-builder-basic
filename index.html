@@ -48,6 +48,7 @@
       const [fileContent, setFileContent] = useState(null);
       const [lastPrompt, setLastPrompt] = useState('');
       const [showAddMenu, setShowAddMenu] = useState(false);
+      const [promptExpanded, setPromptExpanded] = useState(false);
 
       const shuffleArray = (array) => {
         const shuffled = [...array];
@@ -309,6 +310,7 @@ ${jsonExample}`;
           
           setQuestions([...questions, ...newQs]);
           setLastPrompt(aiMode === 'topic' ? aiSettings.topic : aiMode === 'paste' ? aiSettings.pastedQuestions : 'From document');
+          setPromptExpanded(false);
           setShowAIPanel(false); setGenStatus(''); setUploadedFile(null); setFileContent(null);
         } catch (err) {
           if (err.name === 'AbortError') setGenStatus('Cancelled.');
@@ -420,12 +422,19 @@ ${jsonExample}`;
             {lastPrompt && questions.length > 0 && (
               <div style={{ marginBottom: '20px', padding: '14px 18px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                       <span style={{ color: '#f37021', fontSize: '14px' }}>✨</span>
                       <span style={{ color: '#888', fontSize: '12px', fontWeight: '500', textTransform: 'uppercase' }}>Last AI Prompt</span>
                     </div>
-                    <p style={{ margin: 0, color: '#333', fontSize: '14px', lineHeight: '1.5' }}>{lastPrompt}</p>
+                    <div style={{ position: 'relative' }}>
+                      <p style={{ margin: 0, color: '#333', fontSize: '14px', lineHeight: '1.5', whiteSpace: 'pre-wrap', overflow: 'hidden', maxHeight: promptExpanded ? 'none' : '3em' }}>{lastPrompt}</p>
+                      {lastPrompt.length > 150 && (
+                        <button onClick={() => setPromptExpanded(!promptExpanded)} style={{ background: 'none', border: 'none', color: '#f37021', fontSize: '13px', cursor: 'pointer', padding: '4px 0', marginTop: '4px' }}>
+                          {promptExpanded ? '▲ Show less' : '▼ Show more'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <button onClick={() => { setAiMode('topic'); setShowAIPanel(true); setGenStatus(''); }} style={btnSecondary}>Edit & Regenerate</button>
                 </div>
