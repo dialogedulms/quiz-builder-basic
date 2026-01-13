@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -122,94 +123,14 @@
         formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
         formData.append('public_id', `quiz_images/${Date.now()}_${imageName}`);
         
-        console.log('Uploading to Cloudinary:', imageName, 'size:', imageBlob.size);
-        
         const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
           method: 'POST',
           body: formData
         });
         
         const data = await response.json();
-        
-        if (!response.ok) {
-          console.error('Cloudinary error:', data);
-          throw new Error(data.error?.message || 'Image upload failed');
-        }
-        
-        console.log('Cloudinary success:', data.secure_url);
+        if (!response.ok) throw new Error(data.error?.message || 'Image upload failed');
         return data.secure_url;
-      };
-
-      const extractDocxWithImages = async (arrayBuffer) => {
-        const zip = await JSZip.loadAsync(arrayBuffer);
-        
-        // Get relationship mappings (rId -> image file)
-        const relsContent = await zip.files['word/_rels/document.xml.rels']?.async('string') || '';
-        console.log('Rels content found:', relsContent.length, 'chars');
-        
-        const rIdToImage = {};
-        // Match image relationships - look for Type containing "image"
-        const relMatches = [...relsContent.matchAll(/Relationship[^>]*Id="(rId\d+)"[^>]*Target="([^"]+)"/g)];
-        console.log('Found relationships:', relMatches.length);
-        
-        for (const match of relMatches) {
-          const target = match[2];
-          if (target.includes('media/')) {
-            const imagePath = 'word/' + target.replace('../', '');
-            rIdToImage[match[1]] = imagePath;
-            console.log('Mapped', match[1], '->', imagePath);
-          }
-        }
-        
-        // Parse document XML to get image references
-        const docContent = await zip.files['word/document.xml']?.async('string') || '';
-        console.log('Doc content found:', docContent.length, 'chars');
-        
-        // Extract images with their rIds - look for blip elements
-        const imageRefs = [];
-        const blipMatches = [...docContent.matchAll(/r:embed="(rId\d+)"/g)];
-        console.log('Found blip references:', blipMatches.length);
-        
-        for (const match of blipMatches) {
-          if (rIdToImage[match[1]]) {
-            imageRefs.push(match[1]);
-            console.log('Image ref found:', match[1]);
-          }
-        }
-        
-        // Extract text using mammoth
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        const text = result.value;
-        
-        // Extract images and upload to Cloudinary
-        const uploadedImages = [];
-        console.log('Uploading', imageRefs.length, 'images to Cloudinary...');
-        
-        for (let i = 0; i < imageRefs.length; i++) {
-          const rId = imageRefs[i];
-          const imagePath = rIdToImage[rId];
-          console.log('Processing image', i + 1, ':', imagePath);
-          
-          if (imagePath && zip.files[imagePath]) {
-            try {
-              const imageData = await zip.files[imagePath].async('blob');
-              const ext = imagePath.split('.').pop() || 'png';
-              const imageBlob = new Blob([imageData], { type: `image/${ext}` });
-              console.log('Uploading to Cloudinary:', imagePath, 'size:', imageBlob.size);
-              const url = await uploadToCloudinary(imageBlob, `image${i + 1}.${ext}`);
-              console.log('Upload success:', url);
-              uploadedImages.push({ index: i, url, rId });
-            } catch (err) {
-              console.error('Failed to upload image:', err);
-              uploadedImages.push({ index: i, url: null, error: err.message });
-            }
-          } else {
-            console.log('Image file not found in zip:', imagePath);
-          }
-        }
-        
-        console.log('Total uploaded images:', uploadedImages.filter(img => img.url).length);
-        return { text, images: uploadedImages };
       };
 
       const handleFile = async (file) => {
