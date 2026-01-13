@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -62,6 +63,7 @@
       const createQuestion = () => ({
         id: Date.now(), questionType: 'Single Choice', scoring: 'Simple', questionText: '',
         points: '10', tags: '', numAlts: 4, correctFb: '', incorrectFb: '', showFeedback: false,
+        instructionType: '', instructionContent: '',
         alternatives: Array(10).fill(null).map(() => ({ text: '', correct: false, pct: '', feedback: '' }))
       });
 
@@ -111,6 +113,73 @@
         return fullText || '[No text content found]';
       };
 
+      // Cloudinary configuration
+      const CLOUDINARY_CLOUD_NAME = 'dukdrig2v';
+      const CLOUDINARY_UPLOAD_PRESET = 'quiz_images';
+
+      const uploadToCloudinary = async (imageBlob, imageName) => {
+        const formData = new FormData();
+        formData.append('file', imageBlob);
+        formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+        formData.append('public_id', `quiz_images/${Date.now()}_${imageName}`);
+        
+        const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (!response.ok) throw new Error('Image upload failed');
+        const data = await response.json();
+        return data.secure_url;
+      };
+
+      const extractDocxWithImages = async (arrayBuffer) => {
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        
+        // Get relationship mappings (rId -> image file)
+        const relsContent = await zip.files['word/_rels/document.xml.rels']?.async('string') || '';
+        const rIdToImage = {};
+        const relMatches = relsContent.matchAll(/Id="(rId\d+)"[^>]*Target="([^"]*image[^"]*)"/g);
+        for (const match of relMatches) {
+          rIdToImage[match[1]] = match[2].replace('../', '').replace('media/', 'word/media/');
+        }
+        
+        // Parse document XML to get text and image positions
+        const docContent = await zip.files['word/document.xml']?.async('string') || '';
+        
+        // Extract images with their rIds
+        const imageRefs = [];
+        const drawingMatches = docContent.matchAll(/<w:drawing>[\s\S]*?<a:blip[^>]*r:embed="(rId\d+)"[\s\S]*?<\/w:drawing>/g);
+        for (const match of drawingMatches) {
+          imageRefs.push(match[1]);
+        }
+        
+        // Extract text using mammoth
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        const text = result.value;
+        
+        // Extract images and upload to Cloudinary
+        const uploadedImages = [];
+        for (let i = 0; i < imageRefs.length; i++) {
+          const rId = imageRefs[i];
+          const imagePath = rIdToImage[rId];
+          if (imagePath && zip.files[imagePath]) {
+            try {
+              const imageData = await zip.files[imagePath].async('blob');
+              const ext = imagePath.split('.').pop() || 'png';
+              const imageBlob = new Blob([imageData], { type: `image/${ext}` });
+              const url = await uploadToCloudinary(imageBlob, `image${i + 1}.${ext}`);
+              uploadedImages.push({ index: i, url, rId });
+            } catch (err) {
+              console.error('Failed to upload image:', err);
+              uploadedImages.push({ index: i, url: null, error: err.message });
+            }
+          }
+        }
+        
+        return { text, images: uploadedImages };
+      };
+
       const handleFile = async (file) => {
         if (!file) return;
         setUploadedFile(file);
@@ -118,21 +187,28 @@
         try {
           if (file.type === 'application/pdf') {
             const text = await extractPdfText(await file.arrayBuffer());
-            setFileContent({ type: 'text/plain', text }); setGenStatus('');
+            setFileContent({ type: 'text/plain', text, images: [] }); setGenStatus('');
           } else if (file.name.endsWith('.docx')) {
-            const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
-            setFileContent({ type: 'text/plain', text: result.value }); setGenStatus('');
+            setGenStatus('Processing document and uploading images...');
+            const { text, images } = await extractDocxWithImages(await file.arrayBuffer());
+            const successfulImages = images.filter(img => img.url);
+            if (successfulImages.length > 0) {
+              setGenStatus(`Uploaded ${successfulImages.length} image(s). Ready to generate.`);
+            } else {
+              setGenStatus('');
+            }
+            setFileContent({ type: 'text/plain', text, images: successfulImages });
           } else if (file.name.endsWith('.pptx')) {
             const text = await extractPptxText(await file.arrayBuffer());
-            setFileContent({ type: 'text/plain', text }); setGenStatus('');
+            setFileContent({ type: 'text/plain', text, images: [] }); setGenStatus('');
           } else if (file.name.endsWith('.doc') || file.name.endsWith('.ppt')) {
             setGenStatus('Note: Legacy formats not supported. Please convert to .docx or .pptx');
             setFileContent(null);
           } else if (file.type.startsWith('image/')) {
-            setFileContent({ type: 'image', text: `[Image: ${file.name}]` });
+            setFileContent({ type: 'image', text: `[Image: ${file.name}]`, images: [] });
             setGenStatus('Note: Images cannot be processed. Please use PDF, Word, or PowerPoint.');
           } else {
-            setFileContent({ type: 'text/plain', text: await file.text() }); setGenStatus('');
+            setFileContent({ type: 'text/plain', text: await file.text(), images: [] }); setGenStatus('');
           }
         } catch (err) { setGenStatus('Error: ' + err.message); }
       };
@@ -160,7 +236,7 @@
         setIsGenerating(true);
         abortControllerRef.current = new AbortController();
 
-        const jsonExample = `{"questions":[{"questionType":"Single Choice","scoring":"Simple","questionText":"What is X?","points":10,"tags":"","correctFeedback":"","incorrectFeedback":"","alternatives":[{"text":"Option A","correct":false,"feedback":""},{"text":"Option B","correct":true,"feedback":""},{"text":"Option C","correct":false,"feedback":""},{"text":"Option D","correct":false,"feedback":""},{"text":"Option E","correct":false,"feedback":""}]}]}`;
+        const jsonExample = `{"questions":[{"questionType":"Single Choice","scoring":"Simple","questionText":"What is X?","points":10,"tags":"","instructionType":"","instructionContent":"","correctFeedback":"","incorrectFeedback":"","alternatives":[{"text":"Option A","correct":false,"feedback":""},{"text":"Option B","correct":true,"feedback":""},{"text":"Option C","correct":false,"feedback":""},{"text":"Option D","correct":false,"feedback":""},{"text":"Option E","correct":false,"feedback":""}]}]}`;
         
         const feedbackInstr = !aiSettings.addFeedback ? 'Do NOT include any feedback fields - leave correctFeedback, incorrectFeedback, and alternative feedback as empty strings ""' :
           aiSettings.feedbackSource === 'generic' ? 'Use generic feedback: correctFeedback="Correct! Great job.", incorrectFeedback="Incorrect. Please review the material."' :
@@ -259,10 +335,27 @@ ${jsonExample}`;
           } else {
             // Use batchContent if provided (when batching), otherwise use full fileContent
             const content = batchContent || fileContent?.text || '';
+            const images = fileContent?.images || [];
             const extractAll = aiSettings.useAllQuestions;
+            
+            // Build image instruction for AI
+            let imageInstr = '';
+            if (images.length > 0) {
+              const imageList = images.map((img, i) => `Image ${i + 1}: ${img.url}`).join('\n');
+              imageInstr = `
+IMAGES UPLOADED (assign to questions in order - Image 1 for Question 1, Image 2 for Question 2, etc.):
+${imageList}
+
+For questions with images, set:
+- instructionType: "Image"
+- instructionContent: "[the image URL]"
+For questions without images, leave both as empty strings.`;
+            }
+            
             prompt = `${extractAll ? 'Extract ALL quiz questions from this content' : 'Generate ' + aiSettings.numQuestions + ' quiz questions based on this content'}:
 
 ${content}
+${imageInstr}
 
 RULES:
 - ${extractAll ? 'Find and extract every question with its alternatives' : 'Create questions based on the content'}
@@ -390,6 +483,7 @@ ${jsonExample}`;
               ...createQuestion(), id: Date.now() + i, questionType: q.questionType || 'Single Choice',
               scoring: q.scoring || 'Simple', questionText: q.questionText || '', points: String(q.points || 10),
               tags: q.tags || '', numAlts: numAltsToUse,
+              instructionType: q.instructionType || '', instructionContent: q.instructionContent || '',
               correctFb: q.correctFeedback || '', incorrectFb: q.incorrectFeedback || '', 
               showFeedback: hasQFb || hasAltFb,
               alternatives: [...processedAlts.slice(0, maxAlts).map(a => ({
@@ -441,6 +535,8 @@ ${jsonExample}`;
           alts.forEach((alt, ai) => {
             const row = Array(21).fill('');
             row[0] = ai === 0 ? (q.questionType === 'Single Choice' ? 'SC' : 'MC') : '-';
+            row[1] = ai === 0 ? (q.instructionType || '') : '';
+            row[2] = ai === 0 ? (q.instructionContent || '') : '';
             row[3] = ai === 0 ? q.questionText : '';
             row[4] = ai === 0 ? q.points : '';
             row[5] = ai === 0 ? q.tags : '';
@@ -699,9 +795,20 @@ ${jsonExample}`;
             {questions.map((q, qi) => (
               <div key={q.id} style={{ marginBottom: '16px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #ddd', padding: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-                  <span style={{ fontWeight: '600' }}>Question {qi + 1}</span>
+                  <span style={{ fontWeight: '600' }}>
+                    Question {qi + 1}
+                    {q.instructionType === 'Image' && q.instructionContent && (
+                      <span style={{ marginLeft: '8px', color: '#5cb85c', fontSize: '12px' }} title={q.instructionContent}>📷 Image attached</span>
+                    )}
+                  </span>
                   <button onClick={() => setQuestions(questions.filter((_, i) => i !== qi))} style={{ background: 'none', border: 'none', color: '#d9534f', cursor: 'pointer' }}>🗑️</button>
                 </div>
+                {q.instructionType === 'Image' && q.instructionContent && (
+                  <div style={{ marginBottom: '16px', padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+                    <img src={q.instructionContent} alt="Question image" style={{ maxWidth: '200px', maxHeight: '150px', borderRadius: '4px' }} />
+                    <input value={q.instructionContent} onChange={e => updateQ(qi, 'instructionContent', e.target.value)} placeholder="Image URL" style={{ ...inputStyle, marginTop: '8px', fontSize: '12px' }} />
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '16px' }}>
                   <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Type</label><select value={q.questionType} onChange={e => updateQ(qi, 'questionType', e.target.value)} style={inputStyle}><option>Single Choice</option><option>Multiple Choice</option></select></div>
                   {q.questionType === 'Multiple Choice' && <div><label style={{ display: 'block', marginBottom: '6px', color: '#666', fontSize: '13px' }}>Scoring</label><select value={q.scoring} onChange={e => updateQ(qi, 'scoring', e.target.value)} style={inputStyle}><option>Simple</option><option>Weighted</option></select></div>}
