@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -123,13 +122,21 @@
         formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
         formData.append('public_id', `quiz_images/${Date.now()}_${imageName}`);
         
+        console.log('Uploading to Cloudinary:', imageName, 'size:', imageBlob.size);
+        
         const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
           method: 'POST',
           body: formData
         });
         
-        if (!response.ok) throw new Error('Image upload failed');
         const data = await response.json();
+        
+        if (!response.ok) {
+          console.error('Cloudinary error:', data);
+          throw new Error(data.error?.message || 'Image upload failed');
+        }
+        
+        console.log('Cloudinary success:', data.secure_url);
         return data.secure_url;
       };
 
@@ -138,20 +145,36 @@
         
         // Get relationship mappings (rId -> image file)
         const relsContent = await zip.files['word/_rels/document.xml.rels']?.async('string') || '';
+        console.log('Rels content found:', relsContent.length, 'chars');
+        
         const rIdToImage = {};
-        const relMatches = relsContent.matchAll(/Id="(rId\d+)"[^>]*Target="([^"]*image[^"]*)"/g);
+        // Match image relationships - look for Type containing "image"
+        const relMatches = [...relsContent.matchAll(/Relationship[^>]*Id="(rId\d+)"[^>]*Target="([^"]+)"/g)];
+        console.log('Found relationships:', relMatches.length);
+        
         for (const match of relMatches) {
-          rIdToImage[match[1]] = match[2].replace('../', '').replace('media/', 'word/media/');
+          const target = match[2];
+          if (target.includes('media/')) {
+            const imagePath = 'word/' + target.replace('../', '');
+            rIdToImage[match[1]] = imagePath;
+            console.log('Mapped', match[1], '->', imagePath);
+          }
         }
         
-        // Parse document XML to get text and image positions
+        // Parse document XML to get image references
         const docContent = await zip.files['word/document.xml']?.async('string') || '';
+        console.log('Doc content found:', docContent.length, 'chars');
         
-        // Extract images with their rIds
+        // Extract images with their rIds - look for blip elements
         const imageRefs = [];
-        const drawingMatches = docContent.matchAll(/<w:drawing>[\s\S]*?<a:blip[^>]*r:embed="(rId\d+)"[\s\S]*?<\/w:drawing>/g);
-        for (const match of drawingMatches) {
-          imageRefs.push(match[1]);
+        const blipMatches = [...docContent.matchAll(/r:embed="(rId\d+)"/g)];
+        console.log('Found blip references:', blipMatches.length);
+        
+        for (const match of blipMatches) {
+          if (rIdToImage[match[1]]) {
+            imageRefs.push(match[1]);
+            console.log('Image ref found:', match[1]);
+          }
         }
         
         // Extract text using mammoth
@@ -160,23 +183,32 @@
         
         // Extract images and upload to Cloudinary
         const uploadedImages = [];
+        console.log('Uploading', imageRefs.length, 'images to Cloudinary...');
+        
         for (let i = 0; i < imageRefs.length; i++) {
           const rId = imageRefs[i];
           const imagePath = rIdToImage[rId];
+          console.log('Processing image', i + 1, ':', imagePath);
+          
           if (imagePath && zip.files[imagePath]) {
             try {
               const imageData = await zip.files[imagePath].async('blob');
               const ext = imagePath.split('.').pop() || 'png';
               const imageBlob = new Blob([imageData], { type: `image/${ext}` });
+              console.log('Uploading to Cloudinary:', imagePath, 'size:', imageBlob.size);
               const url = await uploadToCloudinary(imageBlob, `image${i + 1}.${ext}`);
+              console.log('Upload success:', url);
               uploadedImages.push({ index: i, url, rId });
             } catch (err) {
               console.error('Failed to upload image:', err);
               uploadedImages.push({ index: i, url: null, error: err.message });
             }
+          } else {
+            console.log('Image file not found in zip:', imagePath);
           }
         }
         
+        console.log('Total uploaded images:', uploadedImages.filter(img => img.url).length);
         return { text, images: uploadedImages };
       };
 
@@ -189,15 +221,75 @@
             const text = await extractPdfText(await file.arrayBuffer());
             setFileContent({ type: 'text/plain', text, images: [] }); setGenStatus('');
           } else if (file.name.endsWith('.docx')) {
-            setGenStatus('Processing document and uploading images...');
-            const { text, images } = await extractDocxWithImages(await file.arrayBuffer());
-            const successfulImages = images.filter(img => img.url);
+            setGenStatus('Extracting document content...');
+            const arrayBuffer = await file.arrayBuffer();
+            
+            // First extract text
+            const textResult = await mammoth.extractRawText({ arrayBuffer });
+            
+            // Then try to extract and upload images
+            setGenStatus('Extracting images from document...');
+            let uploadedImages = [];
+            try {
+              const zip = await JSZip.loadAsync(arrayBuffer);
+              
+              // Get relationship mappings
+              const relsContent = await zip.files['word/_rels/document.xml.rels']?.async('string') || '';
+              const rIdToImage = {};
+              const relMatches = [...relsContent.matchAll(/Relationship[^>]*Id="(rId\d+)"[^>]*Target="([^"]+)"/g)];
+              
+              for (const match of relMatches) {
+                const target = match[2];
+                if (target.includes('media/')) {
+                  const imagePath = 'word/' + target.replace('../', '');
+                  rIdToImage[match[1]] = imagePath;
+                }
+              }
+              
+              // Find image references in document
+              const docContent = await zip.files['word/document.xml']?.async('string') || '';
+              const imageRefs = [];
+              const blipMatches = [...docContent.matchAll(/r:embed="(rId\d+)"/g)];
+              
+              for (const match of blipMatches) {
+                if (rIdToImage[match[1]] && !imageRefs.includes(match[1])) {
+                  imageRefs.push(match[1]);
+                }
+              }
+              
+              // Upload images to Cloudinary
+              if (imageRefs.length > 0) {
+                setGenStatus(`Uploading ${imageRefs.length} image(s) to cloud storage...`);
+                
+                for (let i = 0; i < imageRefs.length; i++) {
+                  const rId = imageRefs[i];
+                  const imagePath = rIdToImage[rId];
+                  
+                  if (imagePath && zip.files[imagePath]) {
+                    try {
+                      setGenStatus(`Uploading image ${i + 1} of ${imageRefs.length}...`);
+                      const imageData = await zip.files[imagePath].async('blob');
+                      const ext = imagePath.split('.').pop() || 'png';
+                      const imageBlob = new Blob([imageData], { type: `image/${ext}` });
+                      const url = await uploadToCloudinary(imageBlob, `image${i + 1}.${ext}`);
+                      uploadedImages.push({ index: i, url, rId });
+                    } catch (err) {
+                      console.error('Image upload failed:', err);
+                    }
+                  }
+                }
+              }
+            } catch (imgErr) {
+              console.error('Image extraction error:', imgErr);
+            }
+            
+            const successfulImages = uploadedImages.filter(img => img.url);
             if (successfulImages.length > 0) {
-              setGenStatus(`Uploaded ${successfulImages.length} image(s). Ready to generate.`);
+              setGenStatus(`✓ Uploaded ${successfulImages.length} image(s). Ready to generate.`);
             } else {
               setGenStatus('');
             }
-            setFileContent({ type: 'text/plain', text, images: successfulImages });
+            setFileContent({ type: 'text/plain', text: textResult.value, images: successfulImages });
           } else if (file.name.endsWith('.pptx')) {
             const text = await extractPptxText(await file.arrayBuffer());
             setFileContent({ type: 'text/plain', text, images: [] }); setGenStatus('');
